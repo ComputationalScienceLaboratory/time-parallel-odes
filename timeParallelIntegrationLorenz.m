@@ -9,15 +9,18 @@ x = 8*randn(40, m);
 model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
 xf = x(:);                           %this needs to be updated before each optimization 
 
-%%%Test block
-cf = @(x) costfcn(x, model);
-gradfunc = @(x) gradfun(x, model);
-%findiffverify(xf, cf, gradfunc);
-optoptions = optimoptions('fminunc', 'MaxIterations', 1250, 'SpecifyObjectiveGradient', true, 'CheckGradients', false, 'Display', 'iter');
-xg = fminunc(cf, x, optoptions);
-xg = [model.x0, xg];
-norm(xg - xt)
+Linvtrans(x, x, model)
 
+
+% %%%Test block
+% cf = @(x) costfcn(x, model);
+% gradfunc = @(x) gradfun(x, model);
+% %findiffverify(xf, cf, gradfunc);
+% optoptions = optimoptions('fminunc', 'MaxIterations', 1250, 'SpecifyObjectiveGradient', true, 'CheckGradients', false, 'Display', 'iter');
+% xg = fminunc(cf, x, optoptions);
+% xg = [model.x0, xg];
+% norm(xg - xt)
+% 
 
 %With the scaling matrix applied, this doesn't seem to verify with the
 %MATLAB finite differences check in optimoptions. Actually applying the
@@ -112,6 +115,17 @@ fwdoptions = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobi
 y = y(end, :).';
 end
 
+%same as above but return a full trajectory instead of the final state
+function y = fullfwd(times, y, model)
+fwdoptions = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobian', model.jac);
+
+[~, y] = MATLODE_SDIRK_FWD_Integrator(model.rhs, times, y, fwdoptions);
+%MATLODE integration returns the initial value (y) and the integrated value
+%as row vectors stacked on top of each other. So, we remove the top row and
+%transpose before returning.
+y = y.';
+end
+
 function maxdiff = findiffverify(x, fun, grad)
     h = 1e-8;
     n = numel(x);
@@ -137,4 +151,61 @@ end
 function G = gradfun(x, model)
     [c, G] = costfcn(x, model);
     return;
+end
+
+%to set up the system resulting from the cholesky decomposition applied to
+% the GN system, we need the applications of the resulting L^-1 and L^-T
+% matrices. This function returns the application of L^-T applied to v.
+function Lntv = Linvtrans(x, v, model)
+m = size(v, 2); 
+Lntv = v(:, m);
+%apply scaling components prior to adjoint run
+for j = 1:m - 1 %outer loop represents row in L^-T matrix. Scale after integrations
+    %Forward integration needed prior to adjoint runs
+    times = model.times(j + 1:end);
+    y = fullfwd(times, x(:, j), model);
+    
+    lambda = v(:, j);
+    for i = j:m - 2
+        tspan = [times(i), times(i+1)];
+        lambda = adjmodel(tspan, x(:, i), lambda, model);
+    end
+    Lntv = [lambda, Lntv];
+end
+%apply scaling components after adjoint runs
+disp(size(Lntv))
+for i = 1:m
+    d = rMat(model.stateestimate(:, i), model);
+    Lntv(:, i) = sqrt(d).*Lntv(:, i);
+end
+
+end
+
+
+%to set up the system resulting from the cholesky decomposition applied to
+% the GN system, we need the applications of the resulting L^-1 and L^-T
+% matrices. This function returns the application of L^-1 applied to v.
+function Lntv = Linvtrans(x, v, model)
+m = size(v, 2); 
+Lntv = v(:, m);
+%apply scaling components prior to adjoint run
+for j = 1:m - 1 %outer loop represents row in L^-T matrix. Scale after integrations
+    %Forward integration needed prior to adjoint runs
+    times = model.times(j + 1:end);
+    y = fullfwd(times, x(:, j), model);
+    
+    lambda = v(:, j);
+    for i = j:m - 2
+        tspan = [times(i), times(i+1)];
+        lambda = adjmodel(tspan, x(:, i), lambda, model);
+    end
+    Lntv = [lambda, Lntv];
+end
+%apply scaling components after adjoint runs
+disp(size(Lntv))
+for i = 1:m
+    d = rMat(model.stateestimate(:, i), model);
+    Lntv(:, i) = sqrt(d).*Lntv(:, i);
+end
+
 end
