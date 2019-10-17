@@ -9,8 +9,10 @@ x = 8*randn(40, m);
 model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
 xf = x(:);                           %this needs to be updated before each optimization 
 
-Linvtrans(x, x, model)
 
+% %See if L^-1 and L^-T run without issues, return correct sizes
+% Linvtrans(x, x, model)
+% Linv(x, x, model)
 
 % %%%Test block
 % cf = @(x) costfcn(x, model);
@@ -20,14 +22,21 @@ Linvtrans(x, x, model)
 % xg = fminunc(cf, x, optoptions);
 % xg = [model.x0, xg];
 % norm(xg - xt)
-% 
 
-%With the scaling matrix applied, this doesn't seem to verify with the
-%MATLAB finite differences check in optimoptions. Actually applying the
-%optimization routine with the gradient seems to work, so I assume that
-%this is working.
+
+%%%GN Hessian Test Block
+while true
+    g = reshape(gradfun(x, model), 40, m);
+    dx = Linv(x, Linvtrans(x, -g, model), model)
+    x = x + dx;
+    norm(x - xt(:, 2:end))
+end
+
+
+%The gradient appears to  verify properly with my own finite differences
+%implementation, or the MATLAB option for fminunc.
 function [c, G] = costfcn(x, model)
-M = numel(model.times) - 1; %number of points from trajectory minus 1. initial value already known
+M = numel(model.times) - 1; %number of points from trajectory minus 1 (initial value already known).
 x = reshape(x, 40, M);
 x = [model.x0, x]; %prepend known initial value
 u = zeros(40, M); %store cost function integrations. 
@@ -38,7 +47,7 @@ adj = zeros(40, M + 1); %adjoint applied to appropriately scaled difference
 G = zeros(40, M + 1); %to store gradient vectors. will be flattened before return.
 %cost function integrations (integrate estimated system states forward one
 %step each)
-parfor i = 2:M + 1
+for i = 2:M + 1
     u(:, i) = fwdmodel([model.times(i - 1), model.times(i)], x(:, i - 1), model);
     diffs(:, i) = x(:, i) - u(:, i);
     d = rMat(model.stateestimate(:, i), model); %diagonal elements of scaling matrix
@@ -53,7 +62,7 @@ c = c/2;
 
 %Calculate gradients
 %Adjoint model runs
-parfor i = 2:M
+for i = 2:M
    v = diffs(:, i + 1);
    d = rMat(model.stateestimate(:, i + 1), model); %diagonal elements of scaling matrix
    v = (1./d).*diffs(:, i+1);  %inverse of diagonal matrix
@@ -62,7 +71,7 @@ parfor i = 2:M
    adj(:, i) = v;
 end
 
-parfor i = 2:M + 1
+for i = 2:M + 1
     G(:, i) = scaleddiffs(:, i) - adj(:, i);
 end
 G = G(:, 2:end); %first column is known initial value (not fed to cost function).
@@ -72,10 +81,12 @@ return;
 end
 
 %Given u, return the diagonal of the diagonal scaling matrix given in Vishwas 
-%& Sandu
+%& Sandu.
+%Right now I have it set to return all 1s (identity scaling matrix) so that
+%I don't have to debug these parts of the L^{-1}, L^{-T} applications yet.
 function d = rMat(u, model)
-d = (model.rtol*abs(u) + model.atol).^2;
-%d = ones(size(u));
+%d = (model.rtol*abs(u) + model.atol).^2;
+d = ones(size(u));
 %R = diag(d)
 end
 
@@ -126,6 +137,8 @@ fwdoptions = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobi
 y = y.';
 end
 
+%my own implementation of a finite differences verification routine for the
+%gradient
 function maxdiff = findiffverify(x, fun, grad)
     h = 1e-8;
     n = numel(x);
@@ -155,57 +168,54 @@ end
 
 %to set up the system resulting from the cholesky decomposition applied to
 % the GN system, we need the applications of the resulting L^-1 and L^-T
-% matrices. This function returns the application of L^-T applied to v.
+% matrices. This function returns the application of L^-T applied to v. 
 function Lntv = Linvtrans(x, v, model)
-m = size(v, 2); 
+m = size(x, 2); 
 Lntv = v(:, m);
-%apply scaling components prior to adjoint run
+
+times = model.times;
 for j = 1:m - 1 %outer loop represents row in L^-T matrix. Scale after integrations
-    %Forward integration needed prior to adjoint runs
-    times = model.times(j + 1:end);
-    y = fullfwd(times, x(:, j), model);
-    
     lambda = v(:, j);
-    for i = j:m - 2
+    for i = j:m - 1
         tspan = [times(i), times(i+1)];
         lambda = adjmodel(tspan, x(:, i), lambda, model);
     end
-    Lntv = [lambda, Lntv];
+    Lntv = [Lntv, lambda];
 end
+Lntv = reshape(Lntv, 40, m);
 %apply scaling components after adjoint runs
-disp(size(Lntv))
-for i = 1:m
-    d = rMat(model.stateestimate(:, i), model);
-    Lntv(:, i) = sqrt(d).*Lntv(:, i);
-end
+% disp(size(Lntv))
+%for i = 1:m
+%    d = rMat(model.stateestimate(:, i), model);
+%    Lntv(:, i) = sqrt(d).*Lntv(:, i);
+%end
 
 end
-
 
 %to set up the system resulting from the cholesky decomposition applied to
 % the GN system, we need the applications of the resulting L^-1 and L^-T
-% matrices. This function returns the application of L^-1 applied to v.
-function Lntv = Linvtrans(x, v, model)
+% matrices. This function returns the application of L^-T applied to v. I
+% suspect that this is currently working (not including the application of 
+%scaling matrices) but that Linvt is not.
+function Lnv = Linv(x, v, model)
 m = size(v, 2); 
-Lntv = v(:, m);
-%apply scaling components prior to adjoint run
-for j = 1:m - 1 %outer loop represents row in L^-T matrix. Scale after integrations
-    %Forward integration needed prior to adjoint runs
-    times = model.times(j + 1:end);
-    y = fullfwd(times, x(:, j), model);
-    
-    lambda = v(:, j);
-    for i = j:m - 2
+Lnv = v(:, 1);
+times = model.times;
+%outer loop represents row in L^-1 matrix. Scale after integrations.
+%since the first row applied to V is simply v(:, 1), we start at 2.
+for j = 2:m  
+    xi = v(:, 1);
+    for i = 1:j-1
         tspan = [times(i), times(i+1)];
-        lambda = adjmodel(tspan, x(:, i), lambda, model);
+        xi = tlmmodel(tspan, x(:, i), xi, model);
     end
-    Lntv = [lambda, Lntv];
+    xi = xi + v(:, j);
+    Lnv = [Lnv, xi];
 end
-%apply scaling components after adjoint runs
-disp(size(Lntv))
-for i = 1:m
-    d = rMat(model.stateestimate(:, i), model);
-    Lntv(:, i) = sqrt(d).*Lntv(:, i);
-end
+%apply scaling components after TLM runs 
+%for i = 1:m
+%    d = rMat(model.stateestimate(:, i), model);
+%    Lnv(:, i) = sqrt(d).*Lnv(:, i);
+%end
 
 end
