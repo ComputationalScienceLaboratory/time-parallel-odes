@@ -9,7 +9,7 @@ x = 8*randn(40, m);
 model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
 xf = x(:);                           %this needs to be updated before each optimization 
 
-
+fullHessian(x, model)
 % %See if L^-1 and L^-T run without issues, return correct sizes
 % Linvtrans(x, x, model)
 % Linv(x, x, model)
@@ -22,15 +22,17 @@ xf = x(:);                           %this needs to be updated before each optim
 % xg = fminunc(cf, x, optoptions);
 % xg = [model.x0, xg];
 % norm(xg - xt)
-
-
-%%%GN Hessian Test Block
-while true
-    g = reshape(gradfun(x, model), 40, m);
-    dx = Linv(x, Linvtrans(x, -g, model), model)
-    x = x + dx;
-    norm(x - xt(:, 2:end))
-end
+% 
+% 
+% %%%GN Hessian Test Block
+% xtest = xt(:, 2:end);
+% x = xtest + 1e-4*randn(size(xtest));
+% while true
+%     g = reshape(gradfun(x, model), 40, m);
+%     dx = Linv(x, Linvtrans(x, -g, model), model)
+%     x = x + dx;
+%     norm(x - xt(:, 2:end))
+% end
 
 
 %The gradient appears to  verify properly with my own finite differences
@@ -38,6 +40,7 @@ end
 function [c, G] = costfcn(x, model)
 M = numel(model.times) - 1; %number of points from trajectory minus 1 (initial value already known).
 x = reshape(x, 40, M);
+
 x = [model.x0, x]; %prepend known initial value
 u = zeros(40, M); %store cost function integrations. 
 u = [model.x0, x]; %prepend known initial value to make indices line up
@@ -85,8 +88,8 @@ end
 %Right now I have it set to return all 1s (identity scaling matrix) so that
 %I don't have to debug these parts of the L^{-1}, L^{-T} applications yet.
 function d = rMat(u, model)
-%d = (model.rtol*abs(u) + model.atol).^2;
-d = ones(size(u));
+d = (model.rtol*abs(u) + model.atol).^2;
+%d = ones(size(u));
 %R = diag(d)
 end
 
@@ -170,26 +173,27 @@ end
 % the GN system, we need the applications of the resulting L^-1 and L^-T
 % matrices. This function returns the application of L^-T applied to v. 
 function Lntv = Linvtrans(x, v, model)
-m = size(x, 2); 
+m = size(v, 2); 
+for i = 1:m
+    d = rMat(model.stateestimate(:, i), model);
+    v(:, i) = sqrt(d).*v(:, i);
+end
+
 Lntv = v(:, m);
 
+
 times = model.times;
-for j = 1:m - 1 %outer loop represents row in L^-T matrix. Scale after integrations
+for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after integrations
     lambda = v(:, j);
     for i = j:m - 1
         tspan = [times(i), times(i+1)];
         lambda = adjmodel(tspan, x(:, i), lambda, model);
     end
-    Lntv = [Lntv, lambda];
+    Lntv = [lambda, Lntv];
 end
 Lntv = reshape(Lntv, 40, m);
 %apply scaling components after adjoint runs
 % disp(size(Lntv))
-%for i = 1:m
-%    d = rMat(model.stateestimate(:, i), model);
-%    Lntv(:, i) = sqrt(d).*Lntv(:, i);
-%end
-
 end
 
 %to set up the system resulting from the cholesky decomposition applied to
@@ -199,6 +203,15 @@ end
 %scaling matrices) but that Linvt is not.
 function Lnv = Linv(x, v, model)
 m = size(v, 2); 
+
+%apply scaling components before TLM runs 
+for i = 1:m
+    d = rMat(model.stateestimate(:, i), model);
+    v(:, i) = sqrt(d).*v(:, i);
+end
+
+
+
 Lnv = v(:, 1);
 times = model.times;
 %outer loop represents row in L^-1 matrix. Scale after integrations.
@@ -212,10 +225,41 @@ for j = 2:m
     xi = xi + v(:, j);
     Lnv = [Lnv, xi];
 end
-%apply scaling components after TLM runs 
-%for i = 1:m
-%    d = rMat(model.stateestimate(:, i), model);
-%    Lnv(:, i) = sqrt(d).*Lnv(:, i);
-%end
+Lnv = reshape(Lnv, 40, m);
 
+end
+
+function Hes = fullHessian(x, model)
+diags = {}; %diagonal elements of hessian matrix
+bdiags = {}; %below diagonal elements
+adiags = {}; %above diagonal elements
+m = size(x, 2); %m is the number of free (vectors) along the trajectory
+n = size(x, 1); %n is the dimension of state vectors
+H = zeros(n*m, m);
+%cell array to contain blocks corresponding to (block) elements of the full
+%Hessian matrix
+for i = 1:m
+    tspan = [model.times(i), model.times(i+1)];
+    mat = tlmmodel(tspan, x(:, i), eye(n), model);
+    d = rMat(model.stateestimate(:, i), model);
+    mat = (1./d).*mat;
+    mat = adjmodel(tspan, x(:,i), mat, model);
+    mat = diag(1./d) + mat;
+    diags{end+1} = mat;
+end
+for i = 2:m
+   d = rMat(model.stateestimate(:, i), model);
+   tspan = [model.times(i), model.times(i+1)];
+   mat = tlmmodel(tspan, x(:, i), eye(n), model);
+   mat = diag(1./d) * mat;
+   bdiags{end + 1} = mat;
+end
+for i = 2:m
+   d = rMat(model.stateestimate(:, i), model);;
+   tspan = [model.times(i), model.times(i+1)];
+   mat = adjmodel(tspan, x(:, i), eye(n), model);
+   mat = mat * diag(1./d);
+   adiags{end + 1} = mat;
+end
+;
 end
