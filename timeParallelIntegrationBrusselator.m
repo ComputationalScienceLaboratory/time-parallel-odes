@@ -9,19 +9,6 @@ x = 8*randn(model.n, m);
 model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
 xf = x(:);                           %this needs to be updated before each optimization 
 
-% % %%%Apply Linv, Linvtrans to full block Hessian, and see if they match
-% % %%%By comparing norm to identity.
-% H = fullHessian(x, model);
-% prod = zeros(size(H));
-% for i = 1:size(H, 1)
-%     g = reshape(H(:, i), model.n, m);
-%     myprod = Linv(x, Linvtrans(x, g, model), model);
-%     prod(:, i) = reshape(myprod, size(H, 1), 1);
-% end
-% disp(norm(prod - eye(size(H,1))));
-%
-%
-%
 % %%%Test block for optimization with gradients only, using MATLAB
 % %%%optimizer
 % cf = @(x) costfcn(x, model);
@@ -33,30 +20,48 @@ xf = x(:);                           %this needs to be updated before each optim
 % norm(xg - xt)
 % 
 % 
-% %%GN Hessian Test Block using Linv, Linvtrans applications
+% %%GN Hessian Test Block using Linv, Linvtrans applications and line
+% search
+xtest = xt(:, 2:end);
+x = xtest + 1*randn(size(xtest));
+while true
+    [c, g] = costfcn(x, model);
+    g = reshape(gradfun(x, model), model.n, m);
+    dx = Linv(x, Linvtrans(x, -g, model), model);
+    a = backtrack(x(:), dx(:), model);
+    dx = reshape(dx, model.n, m);
+    x = x + a*dx;
+   	norm(x - xt(:, 2:end))
+end
+
+
+
+% % 
+% % 
+% %GN Hessian Test Block with full Hessian and line search
 % xtest = xt(:, 2:end);
 % x = xtest + 1*randn(size(xtest));
 % while true
-%     g = reshape(gradfun(x, model), model.n, m);
-%     dx = Linv(x, Linvtrans(x, -g, model), model);
-%     x = x + dx;
-%     norm(x - xt(:, 2:end))
-% end
-% 
-% 
-% %GN Hessian Test Block with full Hessian
-% xtest = xt(:, 2:end);
-% x = xtest + 1*randn(size(xtest));
-% while true
-%     g = reshape(gradfun(x, model), model.n, m);
-%     g = gradfun(x, model);
+%     [c, g] = costfcn(x, model);
 %     H = fullHessian(x, model);
 %     dx = H\(-g);
+%     a = backtrack(x(:), dx, model);
 %     dx = reshape(dx, model.n, m);
-%     x = x + dx;
+%     x = x + a*dx;
 %    	norm(x - xt(:, 2:end))
 % end
 
+% % %%% Test block comparing Linv, Linvtrans, Hessian solves on random
+% % %%% vectors
+% while true
+%      mine = 100*randn(size(x));
+%      g = reshape(mine, model.n, m);
+%      dx = Linv(x, Linvtrans(x, g, model), model);
+%      H = fullHessian(x, model);
+%      dx2 = H\mine(:);
+%      norm(dx2(:) - dx(:))
+% end
+% 
 
 %Return cost function and gradient. Depends on model.stateestimate to form
 %scaling matrices.
@@ -168,14 +173,8 @@ end
 % matrices. This function returns the application of L^-T applied to v. 
 function Lntv = Linvtrans(x, v, model)
 m = size(v, 2); 
-for i = 1:m
-    d = rMat(model.stateestimate(:, i), model);
-    v(:, i) = sqrt(d).*v(:, i);
-end
 
 Lntv = v(:, m);
-
-
 times = model.times;
 for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after integrations
     lambda = v(:, j);
@@ -186,6 +185,12 @@ for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after inte
     Lntv = [lambda, Lntv];
 end
 Lntv = reshape(Lntv, model.n, m);
+
+for i = 1:m
+    d = rMat(model.stateestimate(:, i), model);
+    v(:, i) = sqrt(d).*v(:, i);
+end
+
 end
 
 %to set up the system resulting from the cholesky decomposition applied to
@@ -279,4 +284,26 @@ end
 function G = gradfun(x, model)
     [c, G] = costfcn(x, model);
     return;
+end
+
+
+
+function a = backtrack(x, p, model)
+r = .1;
+c = 1e-6;
+a = 1; %initial step size
+
+while true
+[f, g] = costfcn(x, model);
+
+[af, ag] = costfcn(x +  a*p, model);
+if imag(af) == 0 && af <= (f + c*a*(g.'*p))
+    break
+end
+if a < eps
+    break
+end
+a = r*a;
+end
+
 end
