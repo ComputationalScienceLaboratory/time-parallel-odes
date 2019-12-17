@@ -5,11 +5,11 @@ fwdoptions = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobi
 [~, y] = MATLODE_SDIRK_FWD_Integrator(model.rhs, model.times, model.x0, fwdoptions);
 xt = y.'; %MATLODE returns integration states as row vectors.
 m = numel(model.times) - 1;
-x = 8*randn(40, m);
+x = 8*randn(model.n, m);
 model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
 xf = x(:);                           %this needs to be updated before each optimization 
 
-fullHessian(x, model)
+%fullHessian(x, model)
 % %See if L^-1 and L^-T run without issues, return correct sizes
 % Linvtrans(x, x, model)
 % Linv(x, x, model)
@@ -24,30 +24,45 @@ fullHessian(x, model)
 % norm(xg - xt)
 % 
 % 
-% %%%GN Hessian Test Block
+%%GN Hessian Test Block
+xtest = xt(:, 2:end);
+x = xtest + 1*randn(size(xtest));
+while true
+    g = reshape(gradfun(x, model), model.n, m);
+    dx = Linv(x, Linvtrans(x, -g, model), model)
+    x = x + dx;
+    norm(x - xt(:, 2:end))
+end
+% 
+% 
+% %GN Hessian Test Block with full Hessian
 % xtest = xt(:, 2:end);
-% x = xtest + 1e-4*randn(size(xtest));
+% x = xtest + 1*randn(size(xtest));
 % while true
-%     g = reshape(gradfun(x, model), 40, m);
-%     dx = Linv(x, Linvtrans(x, -g, model), model)
+%     g = reshape(gradfun(x, model), model.n, m);
+%     g = gradfun(x, model);
+%     H = fullHessian(x, model);
+%     dx = H\(-g);
+%     dx = reshape(dx, model.n, m);
 %     x = x + dx;
-%     norm(x - xt(:, 2:end))
+%    	norm(x - xt(:, 2:end))
 % end
-
-
+% 
+% 
+% 
 %The gradient appears to  verify properly with my own finite differences
 %implementation, or the MATLAB option for fminunc.
 function [c, G] = costfcn(x, model)
 M = numel(model.times) - 1; %number of points from trajectory minus 1 (initial value already known).
-x = reshape(x, 40, M);
+x = reshape(x, model.n, M);
 
 x = [model.x0, x]; %prepend known initial value
-u = zeros(40, M); %store cost function integrations. 
+u = zeros(model.n, M); %store cost function integrations. 
 u = [model.x0, x]; %prepend known initial value to make indices line up
 diffs = zeros(size(u)); %to store differences between integration values
 scaleddiffs = zeros(size(diffs)); %differences with scaling matrices applied
-adj = zeros(40, M + 1); %adjoint applied to appropriately scaled difference
-G = zeros(40, M + 1); %to store gradient vectors. will be flattened before return.
+adj = zeros(model.n, M + 1); %adjoint applied to appropriately scaled difference
+G = zeros(model.n, M + 1); %to store gradient vectors. will be flattened before return.
 %cost function integrations (integrate estimated system states forward one
 %step each)
 for i = 2:M + 1
@@ -98,7 +113,7 @@ end
 function v = adjmodel(tspan, y, v, model)
 %adjoint run
 %Options  = MATLODE_OPTIONS('AbsTol',model.atol, 'RelTol', model.rtol, 'Lambda', @(t, y) v, 'Jacobian', model.jac, 'ADJ_AbsTol', model.atol, 'ADJ_RelTol', model.rtol);
-Options  = MATLODE_OPTIONS('AbsTol',1e-10, 'RelTol', 1e-10, 'Lambda', @(t, y) v, 'Jacobian', model.jac, 'ADJ_AbsTol', 1e-12, 'ADJ_RelTol', 1e-12);
+Options  = MATLODE_OPTIONS('AbsTol',model.atol, 'RelTol', model.rtol, 'Lambda', @(t, y) v, 'Jacobian', model.jac, 'ADJ_AbsTol', model.atol, 'ADJ_RelTol', model.rtol);
 [~, ~, v] = MATLODE_SDIRK_ADJ_Integrator(model.rhs, tspan, y, Options);
 %MATLODE integration returns the initial value (y) and the integrated value
 %as row vectors stacked on top of each other. So, we remove the top row and
@@ -110,7 +125,7 @@ end
 %parameters should be applied to
 function v = tlmmodel(tspan, y, v, model)
 %tlm run
-Options = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobian', model.jac, 'Y_TLM', eye(40));
+Options = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobian', model.jac, 'Y_TLM', eye(model.n), 'TLM_AbsTol', model.atol, 'TLM_RelTol',model.rtol);
 %SDIRK TLM doesn't seems to break on application to a single input  vector for some
 %reason, so return full sensitivity matrix and apply to v
 [~, ~, sens] = MATLODE_SDIRK_TLM_Integrator(model.rhs, tspan, y, Options);
@@ -191,19 +206,15 @@ for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after inte
     end
     Lntv = [lambda, Lntv];
 end
-Lntv = reshape(Lntv, 40, m);
-%apply scaling components after adjoint runs
-% disp(size(Lntv))
+Lntv = reshape(Lntv, model.n, m);
 end
 
 %to set up the system resulting from the cholesky decomposition applied to
 % the GN system, we need the applications of the resulting L^-1 and L^-T
-% matrices. This function returns the application of L^-T applied to v. I
-% suspect that this is currently working (not including the application of 
-%scaling matrices) but that Linvt is not.
+% matrices. This function returns the application of L^-T applied to v.
 function Lnv = Linv(x, v, model)
 m = size(v, 2); 
-
+git
 %apply scaling components before TLM runs 
 for i = 1:m
     d = rMat(model.stateestimate(:, i), model);
@@ -225,7 +236,7 @@ for j = 2:m
     xi = xi + v(:, j);
     Lnv = [Lnv, xi];
 end
-Lnv = reshape(Lnv, 40, m);
+Lnv = reshape(Lnv, model.n, m);
 
 end
 
@@ -235,9 +246,8 @@ bdiags = {}; %below diagonal elements
 adiags = {}; %above diagonal elements
 m = size(x, 2); %m is the number of free (vectors) along the trajectory
 n = size(x, 1); %n is the dimension of state vectors
-H = zeros(n*m, m);
-%cell array to contain blocks corresponding to (block) elements of the full
-%Hessian matrix
+H = sparse(n*m, n*m);
+%build diagonal blocks
 for i = 1:m
     tspan = [model.times(i), model.times(i+1)];
     mat = tlmmodel(tspan, x(:, i), eye(n), model);
@@ -247,6 +257,7 @@ for i = 1:m
     mat = diag(1./d) + mat;
     diags{end+1} = mat;
 end
+%build below diagonal blocks
 for i = 2:m
    d = rMat(model.stateestimate(:, i), model);
    tspan = [model.times(i), model.times(i+1)];
@@ -254,6 +265,7 @@ for i = 2:m
    mat = diag(1./d) * mat;
    bdiags{end + 1} = mat;
 end
+%build above diagonal blocks
 for i = 2:m
    d = rMat(model.stateestimate(:, i), model);;
    tspan = [model.times(i), model.times(i+1)];
@@ -261,5 +273,19 @@ for i = 2:m
    mat = mat * diag(1./d);
    adiags{end + 1} = mat;
 end
-;
+%build full GN Hessian from blocks
+%build top row outside loop
+H(1:n,1:n) = diags{1};
+H(1:n,n+1:2*n) = adiags{1};
+%build bottom row outside loop
+H((m - 1)*n + 1:m*n,(m-1)*n + 1:m*n) = diags{1};
+H((m - 1)*n + 1:m*n,(m-2)*n + 1:(m-1)*n) = bdiags{1};
+%main loop builds all rows except first and last (i.e. those containing all
+%3 blocks)
+for i = 2:m-1
+    H((i-1)*n + 1:i*n,(i-1)*n + 1:i*n) = diags{1};%diagonal blocks
+    H((i-1)*n + 1:i*n,(i-2)*n + 1:(i-1)*n) = bdiags{1} %below diagonal blocks
+    H((i-1)*n + 1:i*n,i*n + 1:(i+1)*n) = adiags{1};
+end
+Hes = H;
 end
