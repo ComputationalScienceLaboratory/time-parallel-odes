@@ -18,41 +18,48 @@ xf = x(:);                           %this needs to be updated before each optim
 % xg = fminunc(cf, x, optoptions);
 % xg = [model.x0, xg];
 % norm(xg - xt)
+
+
+% % %%GN Hessian Test Block using Linv, Linvtrans applications and line
+% % search
+% xtest = xt(:, 2:end);
+% x = xtest + 1*randn(size(xtest));
+% model.stateestimate = [model.x0, x]; 
+% while true
+%     [c, g] = costfcn(x, model);
+%     g = reshape(gradfun(x, model), model.n, m);
+%     dx = Linv(x, Linvtrans(x, -g, model), model);
+%     a = backtrack(x(:), dx(:), model);
+%     dx = reshape(dx, model.n, m);
+%     x = x + a*dx;
+%     c
+%     norm(x - xt(:, 2:end))
+% end
 % 
-% 
-% %%GN Hessian Test Block using Linv, Linvtrans applications and line
-% search
-xtest = xt(:, 2:end);
-x = xtest + 1*randn(size(xtest));
-while true
-    [c, g] = costfcn(x, model);
-    g = reshape(gradfun(x, model), model.n, m);
-    dx = Linv(x, Linvtrans(x, -g, model), model);
-    a = backtrack(x(:), dx(:), model);
-    dx = reshape(dx, model.n, m);
-    x = x + a*dx;
-   	norm(x - xt(:, 2:end))
-end
 
 
-
-% % 
-% % 
+% % % 
+% % % 
 % %GN Hessian Test Block with full Hessian and line search
 % xtest = xt(:, 2:end);
 % x = xtest + 1*randn(size(xtest));
+% model.stateestimate = [model.x0, x]; 
 % while true
 %     [c, g] = costfcn(x, model);
 %     H = fullHessian(x, model);
 %     dx = H\(-g);
 %     a = backtrack(x(:), dx, model);
 %     dx = reshape(dx, model.n, m);
+%     c
 %     x = x + a*dx;
 %    	norm(x - xt(:, 2:end))
 % end
 
 % % %%% Test block comparing Linv, Linvtrans, Hessian solves on random
 % % %%% vectors
+% xtest = xt(:, 2:end);
+% x = xtest + 1*randn(size(xtest));
+% model.stateestimate = [model.x0, x]; 
 % while true
 %      mine = 100*randn(size(x));
 %      g = reshape(mine, model.n, m);
@@ -289,7 +296,7 @@ end
 
 
 function a = backtrack(x, p, model)
-r = .1;
+r = .5;
 c = 1e-6;
 a = 1; %initial step size
 
@@ -300,7 +307,7 @@ while true
 if imag(af) == 0 && af <= (f + c*a*(g.'*p))
     break
 end
-if a < eps
+if a < numel(x)*eps
     break
 end
 a = r*a;
