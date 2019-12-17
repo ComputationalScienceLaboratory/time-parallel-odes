@@ -19,7 +19,11 @@ xf = x(:);                           %this needs to be updated before each optim
 %     prod(:, i) = reshape(myprod, size(H, 1), 1);
 % end
 % disp(norm(prod - eye(size(H,1))));
-% %%%Test block
+%
+%
+%
+% %%%Test block for optimization with gradients only, using MATLAB
+% %%%optimizer
 % cf = @(x) costfcn(x, model);
 % gradfunc = @(x) gradfun(x, model);
 % %findiffverify(xf, cf, gradfunc);
@@ -52,11 +56,10 @@ xf = x(:);                           %this needs to be updated before each optim
 %     x = x + dx;
 %    	norm(x - xt(:, 2:end))
 % end
-% 
-% 
-% 
-%The gradient appears to  verify properly with my own finite differences
-%implementation, or the MATLAB option for fminunc.
+
+
+%Return cost function and gradient. Depends on model.stateestimate to form
+%scaling matrices.
 function [c, G] = costfcn(x, model)
 M = numel(model.times) - 1; %number of points from trajectory minus 1 (initial value already known).
 x = reshape(x, model.n, M);
@@ -130,7 +133,7 @@ end
 function v = tlmmodel(tspan, y, v, model)
 %tlm run
 Options = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobian', model.jac, 'Y_TLM', eye(model.n), 'TLM_AbsTol', model.atol, 'TLM_RelTol',model.rtol);
-%SDIRK TLM doesn't seems to break on application to a single input  vector for some
+%SDIRK TLM seems to break on application to a single input  vector for some
 %reason, so return full sensitivity matrix and apply to v
 [~, ~, sens] = MATLODE_SDIRK_TLM_Integrator(model.rhs, tspan, y, Options);
 v = sens*v;
@@ -159,34 +162,6 @@ fwdoptions = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobi
 y = y.';
 end
 
-%my own implementation of a finite differences verification routine for the
-%gradient
-function maxdiff = findiffverify(x, fun, grad)
-    h = 1e-8;
-    n = numel(x);
-    maxdiff = 0;
-    A = eye(n); %grab standard basis vectors from here
-    gradeval = grad(x);
-    diffs = zeros(n, 1);
-    parfor i = 1:n %test in all coordinate directions
-        stepf = x + h*A(:, i);
-        stepb = x - h*A(:, i);
-        fd = (fun(stepf) - fun(stepb))/(2*h);
-        reldiff = abs(fd - gradeval(i))/abs(fd);
-        %disp(i)
-        disp(reldiff)
-        diffs(i) = reldiff;
-    end
-    disp("Max relative difference between finite difference approximation and grad function:");
-    disp(max(diffs));
-    disp("Mean relative difference:");
-    disp(mean(diffs));
-end
-
-function G = gradfun(x, model)
-    [c, G] = costfcn(x, model);
-    return;
-end
 
 %to set up the system resulting from the cholesky decomposition applied to
 % the GN system, we need the applications of the resulting L^-1 and L^-T
@@ -298,4 +273,10 @@ for i = 2:m-1
     H((i-1)*n + 1:i*n,i*n + 1:(i+1)*n) = adiags{1};
 end
 Hes = H;
+end
+
+%for use with finite difference verification routine
+function G = gradfun(x, model)
+    [c, G] = costfcn(x, model);
+    return;
 end
