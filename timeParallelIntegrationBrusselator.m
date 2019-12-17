@@ -38,6 +38,23 @@ xf = x(:);                           %this needs to be updated before each optim
 % 
 
 
+% %%GN Hessian Test Block using coarse Linv, coarse Linvtrans applications and line
+% search
+xtest = xt(:, 2:end);
+x = xtest + 1*randn(size(xtest));
+model.stateestimate = [model.x0, x]; 
+while true
+    [c, g] = costfcn(x, model);
+    g = reshape(gradfun(x, model), model.n, m);
+    dx = cLinv(x, cLinvtrans(x, -g, model), model);
+    a = backtrack(x(:), dx(:), model);
+    dx = reshape(dx, model.n, m);
+    x = x + a*dx;
+    c
+    norm(x - xt(:, 2:end))
+end
+
+
 % % % 
 % % % 
 % %GN Hessian Test Block with full Hessian and line search
@@ -68,7 +85,7 @@ xf = x(:);                           %this needs to be updated before each optim
 %      dx2 = H\mine(:);
 %      norm(dx2(:) - dx(:))
 % end
-% 
+% % 
 
 %Return cost function and gradient. Depends on model.stateestimate to form
 %scaling matrices.
@@ -175,6 +192,42 @@ y = y.';
 end
 
 
+%takes  timespan [t_0, t_1], initial state y, vector v that adjoint model over given
+%parameters should be applied to
+function y = coarseadj(tspan, y, v, model)
+%adjoint run
+%Options  = MATLODE_OPTIONS('AbsTol',model.atol, 'RelTol', model.rtol, 'Lambda', @(t, y) v, 'Jacobian', model.jac, 'ADJ_AbsTol', model.atol, 'ADJ_RelTol', model.rtol);
+Options  = MATLODE_OPTIONS('AbsTol',model.catol, 'RelTol', model.crtol, 'Lambda', @(t, y) v, 'ADJ_AbsTol', model.catol, 'ADJ_RelTol', model.crtol, 'Jacobian', model.jac);
+[~, ~, v] = MATLODE_ERK_ADJ_Integrator(model.rhs, tspan, y, Options);
+%MATLODE integration returns the initial value (y) and the integrated value
+%as row vectors stacked on top of each other. So, we remove the top row and
+%transpose before returning.
+end
+
+%takes  timespan [t_0, t_1], initial state y, vector v that TLM over given
+%parameters should be applied to
+function v = coarsetlm(tspan, y, v, model)
+%tlm run
+Options = MATLODE_OPTIONS('Jacobian', model.jac, 'AbsTol', model.catol, 'RelTol', model.crtol,'Y_TLM', eye(model.n), 'TLM_AbsTol', model.catol, 'TLM_RelTol',model.crtol);
+%SDIRK TLM seems to break on application to a single input  vector for some
+%reason, so return full sensitivity matrix and apply to v
+[~, ~, sens] = MATLODE_ERK_TLM_Integrator(model.rhs, tspan, y, Options);
+v = sens*v;
+end
+
+%given timespan [t_0, t_1], initial value y, return system state at t_1
+%starting from state y at t_0
+function y = coarsefwd(tspan, y, model)
+fwdoptions = MATLODE_OPTIONS('AbsTol', model.catol, 'RelTol', model.crtol);
+
+[~, y] = MATLODE_SDIRK_FWD_Integrator(model.rhs, tspan, y, fwdoptions);
+%MATLODE integration returns the initial value (y) and the integrated value
+%as row vectors stacked on top of each other. So, we remove the top row and
+%transpose before returning.
+y = y(end, :).';
+end
+
+
 %to set up the system resulting from the cholesky decomposition applied to
 % the GN system, we need the applications of the resulting L^-1 and L^-T
 % matrices. This function returns the application of L^-T applied to v. 
@@ -228,6 +281,65 @@ for j = 2:m
     Lnv = [Lnv, xi];
 end
 Lnv = reshape(Lnv, model.n, m);
+
+end
+
+
+
+%to set up the system resulting from the cholesky decomposition applied to
+% the GN system, we need the applications of the resulting L^-1 and L^-T
+% matrices. This function returns the application of L^-T applied to v.
+function Lnv = cLinv(x, v, model)
+m = size(v, 2); 
+
+%apply scaling components before TLM runs 
+for i = 1:m
+    d = rMat(model.stateestimate(:, i), model);
+    v(:, i) = sqrt(d).*v(:, i);
+end
+
+
+
+Lnv = v(:, 1);
+times = model.times;
+%outer loop represents row in L^-1 matrix. Scale after integrations.
+%since the first row applied to V is simply v(:, 1), we start at 2.
+for j = 2:m  
+    xi = v(:, 1);
+    for i = 1:j-1
+        tspan = [times(i), times(i+1)];
+        xi = coarsetlm(tspan, x(:, i), xi, model);
+    end
+    xi = xi + v(:, j);
+    Lnv = [Lnv, xi];
+end
+Lnv = reshape(Lnv, model.n, m);
+
+end
+
+
+%to set up the system resulting from the cholesky decomposition applied to
+% the GN system, we need the applications of the resulting L^-1 and L^-T
+% matrices. This function returns the application of L^-T applied to v. 
+function Lntv = cLinvtrans(x, v, model)
+m = size(v, 2); 
+
+Lntv = v(:, m);
+times = model.times;
+for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after integrations
+    lambda = v(:, j);
+    for i = j:m - 1
+        tspan = [times(i), times(i+1)];
+        lambda = coarseadj(tspan, x(:, i), lambda, model);
+    end
+    Lntv = [lambda, Lntv];
+end
+Lntv = reshape(Lntv, model.n, m);
+
+for i = 1:m
+    d = rMat(model.stateestimate(:, i), model);
+    v(:, i) = sqrt(d).*v(:, i);
+end
 
 end
 
