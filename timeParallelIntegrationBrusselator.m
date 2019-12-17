@@ -9,11 +9,16 @@ x = 8*randn(model.n, m);
 model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
 xf = x(:);                           %this needs to be updated before each optimization 
 
-%fullHessian(x, model)
-% %See if L^-1 and L^-T run without issues, return correct sizes
-% Linvtrans(x, x, model)
-% Linv(x, x, model)
-
+% % %%%Apply Linv, Linvtrans to full block Hessian, and see if they match
+% % %%%By comparing norm to identity.
+% H = fullHessian(x, model);
+% prod = zeros(size(H));
+% for i = 1:size(H, 1)
+%     g = reshape(H(:, i), model.n, m);
+%     myprod = Linv(x, Linvtrans(x, g, model), model);
+%     prod(:, i) = reshape(myprod, size(H, 1), 1);
+% end
+% disp(norm(prod - eye(size(H,1))));
 % %%%Test block
 % cf = @(x) costfcn(x, model);
 % gradfunc = @(x) gradfun(x, model);
@@ -24,15 +29,15 @@ xf = x(:);                           %this needs to be updated before each optim
 % norm(xg - xt)
 % 
 % 
-%%GN Hessian Test Block
-xtest = xt(:, 2:end);
-x = xtest + 1*randn(size(xtest));
-while true
-    g = reshape(gradfun(x, model), model.n, m);
-    dx = Linv(x, Linvtrans(x, -g, model), model)
-    x = x + dx;
-    norm(x - xt(:, 2:end))
-end
+% %%GN Hessian Test Block using Linv, Linvtrans applications
+% xtest = xt(:, 2:end);
+% x = xtest + 1*randn(size(xtest));
+% while true
+%     g = reshape(gradfun(x, model), model.n, m);
+%     dx = Linv(x, Linvtrans(x, -g, model), model);
+%     x = x + dx;
+%     norm(x - xt(:, 2:end))
+% end
 % 
 % 
 % %GN Hessian Test Block with full Hessian
@@ -100,8 +105,7 @@ end
 
 %Given u, return the diagonal of the diagonal scaling matrix given in Vishwas 
 %& Sandu.
-%Right now I have it set to return all 1s (identity scaling matrix) so that
-%I don't have to debug these parts of the L^{-1}, L^{-T} applications yet.
+%return ones to give identity matrix (for testing)
 function d = rMat(u, model)
 d = (model.rtol*abs(u) + model.atol).^2;
 %d = ones(size(u));
@@ -214,7 +218,7 @@ end
 % matrices. This function returns the application of L^-T applied to v.
 function Lnv = Linv(x, v, model)
 m = size(v, 2); 
-git
+
 %apply scaling components before TLM runs 
 for i = 1:m
     d = rMat(model.stateestimate(:, i), model);
@@ -267,7 +271,7 @@ for i = 2:m
 end
 %build above diagonal blocks
 for i = 2:m
-   d = rMat(model.stateestimate(:, i), model);;
+   d = rMat(model.stateestimate(:, i), model);
    tspan = [model.times(i), model.times(i+1)];
    mat = adjmodel(tspan, x(:, i), eye(n), model);
    mat = mat * diag(1./d);
@@ -276,15 +280,21 @@ end
 %build full GN Hessian from blocks
 %build top row outside loop
 H(1:n,1:n) = diags{1};
-H(1:n,n+1:2*n) = adiags{1};
+%If the Hessian has an above diagonal block
+try
+    H(1:n,n+1:2*n) = adiags{1};
+end
 %build bottom row outside loop
 H((m - 1)*n + 1:m*n,(m-1)*n + 1:m*n) = diags{1};
-H((m - 1)*n + 1:m*n,(m-2)*n + 1:(m-1)*n) = bdiags{1};
+%If the Hessian has a below diagonal block
+try
+    H((m - 1)*n + 1:m*n,(m-2)*n + 1:(m-1)*n) = bdiags{1};
+end
 %main loop builds all rows except first and last (i.e. those containing all
 %3 blocks)
 for i = 2:m-1
     H((i-1)*n + 1:i*n,(i-1)*n + 1:i*n) = diags{1};%diagonal blocks
-    H((i-1)*n + 1:i*n,(i-2)*n + 1:(i-1)*n) = bdiags{1} %below diagonal blocks
+    H((i-1)*n + 1:i*n,(i-2)*n + 1:(i-1)*n) = bdiags{1}; %below diagonal blocks
     H((i-1)*n + 1:i*n,i*n + 1:(i+1)*n) = adiags{1};
 end
 Hes = H;
