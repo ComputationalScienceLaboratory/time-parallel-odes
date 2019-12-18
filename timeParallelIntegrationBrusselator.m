@@ -1,7 +1,7 @@
 model = initIntModel();
 
 %Calculate true trajectory (for testing and performance examination)
-fwdoptions = MATLODE_OPTIONS('AbsTol', model.atol, 'RelTol', model.rtol, 'Jacobian', model.jac);
+fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-10, 'RelTol', 1e-10, 'Jacobian', model.jac);
 [~, y] = MATLODE_SDIRK_FWD_Integrator(model.rhs, model.times, model.x0, fwdoptions);
 xt = y.'; %MATLODE returns integration states as row vectors.
 m = numel(model.times) - 1;
@@ -11,6 +11,9 @@ xf = x(:);                           %this needs to be updated before each optim
 
 % %%%Test block for optimization with gradients only, using MATLAB
 % %%%optimizer
+% xtest = xt(:, 2:end);
+% x = xtest + 1*randn(size(xtest));
+% model.stateestimate = [model.x0, x]; 
 % cf = @(x) costfcn(x, model);
 % gradfunc = @(x) gradfun(x, model);
 % %findiffverify(xf, cf, gradfunc);
@@ -38,8 +41,8 @@ xf = x(:);                           %this needs to be updated before each optim
 % 
 
 
-% %%GN Hessian Test Block using coarse Linv, coarse Linvtrans applications and line
-% search
+%%%GN Hessian Test Block using coarse Linv, coarse Linvtrans applications and line
+%%%search
 xtest = xt(:, 2:end);
 x = xtest + 1*randn(size(xtest));
 model.stateestimate = [model.x0, x]; 
@@ -71,7 +74,7 @@ end
 %     x = x + a*dx;
 %    	norm(x - xt(:, 2:end))
 % end
-
+% 
 % % %%% Test block comparing Linv, Linvtrans, Hessian solves on random
 % % %%% vectors
 % xtest = xt(:, 2:end);
@@ -102,7 +105,7 @@ adj = zeros(model.n, M + 1); %adjoint applied to appropriately scaled difference
 G = zeros(model.n, M + 1); %to store gradient vectors. will be flattened before return.
 %cost function integrations (integrate estimated system states forward one
 %step each)
-for i = 2:M + 1
+parfor i = 2:M + 1
     u(:, i) = fwdmodel([model.times(i - 1), model.times(i)], x(:, i - 1), model);
     diffs(:, i) = x(:, i) - u(:, i);
     d = rMat(model.stateestimate(:, i), model); %diagonal elements of scaling matrix
@@ -117,7 +120,7 @@ c = c/2;
 
 %Calculate gradients
 %Adjoint model runs
-for i = 2:M
+parfor i = 2:M
    v = diffs(:, i + 1);
    d = rMat(model.stateestimate(:, i + 1), model); %diagonal elements of scaling matrix
    v = (1./d).*diffs(:, i+1);  %inverse of diagonal matrix
@@ -293,7 +296,7 @@ function Lnv = cLinv(x, v, model)
 m = size(v, 2); 
 
 %apply scaling components before TLM runs 
-for i = 1:m
+parfor i = 1:m
     d = rMat(model.stateestimate(:, i), model);
     v(:, i) = sqrt(d).*v(:, i);
 end
@@ -304,7 +307,7 @@ Lnv = v(:, 1);
 times = model.times;
 %outer loop represents row in L^-1 matrix. Scale after integrations.
 %since the first row applied to V is simply v(:, 1), we start at 2.
-for j = 2:m  
+parfor j = 2:m  
     xi = v(:, 1);
     for i = 1:j-1
         tspan = [times(i), times(i+1)];
@@ -408,8 +411,8 @@ end
 
 
 function a = backtrack(x, p, model)
-r = .5;
-c = 1e-6;
+r = .9;
+c = 1e-4;
 a = 1; %initial step size
 
 while true
