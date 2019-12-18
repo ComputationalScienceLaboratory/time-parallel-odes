@@ -40,22 +40,22 @@ xf = x(:);                           %this needs to be updated before each optim
 % end
 % 
 
-
-%%%GN Hessian Test Block using coarse Linv, coarse Linvtrans applications and line
-%%%search
-xtest = xt(:, 2:end);
-x = xtest + 1*randn(size(xtest));
-model.stateestimate = [model.x0, x]; 
-while true
-    [c, g] = costfcn(x, model);
-    g = reshape(gradfun(x, model), model.n, m);
-    dx = cLinv(x, cLinvtrans(x, -g, model), model);
-    a = backtrack(x(:), dx(:), model);
-    dx = reshape(dx, model.n, m);
-    x = x + a*dx;
-    c
-    norm(x - xt(:, 2:end))
-end
+% 
+% %%%GN Hessian Test Block using coarse Linv, coarse Linvtrans applications and line
+% %%%search
+% xtest = xt(:, 2:end);
+% x = xtest + 1*randn(size(xtest));
+% model.stateestimate = [model.x0, x]; 
+% while true
+%     [c, g] = costfcn(x, model);
+%     g = reshape(gradfun(x, model), model.n, m);
+%     dx = cLinv(x, cLinvtrans(x, -g, model), model);
+%     a = backtrack(x(:), dx(:), model);
+%     dx = reshape(dx, model.n, m);
+%     x = x + a*dx;
+%     c
+%     norm(x - xt(:, 2:end))
+% end
 
 
 % % % 
@@ -329,17 +329,19 @@ m = size(v, 2);
 
 Lntv = v(:, m);
 times = model.times;
-for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after integrations
+%for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after integrations
+for j = 1:(m - 1)
     lambda = v(:, j);
     for i = j:m - 1
         tspan = [times(i), times(i+1)];
         lambda = coarseadj(tspan, x(:, i), lambda, model);
     end
-    Lntv = [lambda, Lntv];
+    %Lntv = [lambda, Lntv];
+    Lntv = [Lntv, lambda];
 end
 Lntv = reshape(Lntv, model.n, m);
 
-for i = 1:m
+parfor i = 1:m
     d = rMat(model.stateestimate(:, i), model);
     v(:, i) = sqrt(d).*v(:, i);
 end
@@ -414,17 +416,20 @@ function a = backtrack(x, p, model)
 r = .9;
 c = 1e-4;
 a = 1; %initial step size
-
+%af = 0;
 while true
 [f, g] = costfcn(x, model);
-
+try
 [af, ag] = costfcn(x +  a*p, model);
+
 if imag(af) == 0 && af <= (f + c*a*(g.'*p))
     break
+end
 end
 if a < numel(x)*eps
     break
 end
+
 a = r*a;
 end
 

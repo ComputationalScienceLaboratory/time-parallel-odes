@@ -2,9 +2,9 @@ function [model] = initIntModel()
 model.n = 2; %model dimension
 model.jac = @(t, y) fulljacobian(1, y, 5, 5); %RHS Jacobian
 model.rhs = @(t, y) fullf(1, y, 5, 5); %ODE RHS
-tspan = [0, 2]; %full integration timespan
+tspan = [0, 1]; %full integration timespan
 model.tspan = tspan;
-M = 5; %subintervals to divide tspan into. If you set M=1 it will crash.
+M = 3; %subintervals to divide tspan into. If you set M=1 it will crash.
 model.times = linspace(tspan(1), tspan(2), M);
 model.atol = 1e-4; %integration tolerances
 model.rtol = 1e-4;
