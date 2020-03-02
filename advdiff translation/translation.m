@@ -9,28 +9,28 @@ ntracer = 5;
 nx = 100;
 ny = 100;
 nz = 100;
-% test calls(build bump and blow it sideways)
-u =  zeros(nx, ny, nz); %wind
-u(:, 1, 1) = 1*ones(nx, 1);
-% u(1, :, 1) = ones(1, ny);
-% %u = ones(nx, ny, nz);
-kh = zeros(nx, ny, nz); %k
-% % %kh = 1000*ones(nx, ny, nz);
-concentration = zeros(nx, ny, nz, ntracer);
-x = zeros(100, 1);
-x(25:50) = 1;
-concentration(:, 1, 1, 1) = x;
-concentration_bc = zeros(2, ny, nz, ntracer); %first component is w second e
-% % %concentration_bc(:, 1, 1, 1) = zeros(2, 1);
-cdot = zeros(nx, ntracer);
-% %test calls
-transport_X_fwd(10000000000, u, kh, concentration, concentration_bc, cdot);
-%in y direction
-% concetrantion2 = zeros(nx, ny, nz, ntracer);
-% y = zeros(ny, 1);
-% y(25:50) = 1;
-% concentration(1, :, 1, 1) = y;
-% %transport_Y_fwd(100000000000, u, kh, concentration, concentration_bc, cdot);
+% % test calls(build bump and blow it sideways)
+% u =  zeros(nx, ny, nz); %wind
+% u(:, 1, 1) = 1*ones(nx, 1);
+% % u(1, :, 1) = ones(1, ny);
+% % %u = ones(nx, ny, nz);
+% kh = zeros(nx, ny, nz); %k
+% % % %kh = 1000*ones(nx, ny, nz);
+% concentration = zeros(nx, ny, nz, ntracer);
+% x = zeros(100, 1);
+% x(25:50) = 1;
+% concentration(:, 1, 1, 1) = x;
+% concentration_bc = zeros(2, ny, nz, ntracer); %first component is w second e
+% % % %concentration_bc(:, 1, 1, 1) = zeros(2, 1);
+% cdot = zeros(nx, ntracer);
+% % %test calls
+% transport_X_fwd(10000000000, u, kh, concentration, concentration_bc, cdot);
+% %in y direction
+% % concetrantion2 = zeros(nx, ny, nz, ntracer);
+% % y = zeros(ny, 1);
+% % y(25:50) = 1;
+% % concentration(1, :, 1, 1) = y;
+% % %transport_Y_fwd(100000000000, u, kh, concentration, concentration_bc, cdot);
 
 
 % %%%%%%%%transport_Z_fwd test block
@@ -153,6 +153,27 @@ transport_X_fwd(10000000000, u, kh, concentration, concentration_bc, cdot);
 % disp("Relative error (Frobenius)");
 % disp(norm(numjac' - adj, 'fro')/norm(numjac', 'fro'));
 
+
+
+% %%%%%%%%%%%test that I can call transport_X_dadj properly
+% dt = 5;
+% u = zeros(nx, ny, nz);
+% u(:, 1, 1) = 1*ones(nx, 1);
+% % u(1, :, 1) = ones(1, ny);
+% % %u = ones(nx, ny, nz);
+% kh = zeros(nx, ny, nz); %k
+% % % %kh = 1000*ones(nx, ny, nz);
+% concentration = zeros(nx, ny, nz, ntracer);
+% x = zeros(100, 1);
+% x(25:50) = 1;
+% concentration(:, 1, 1, 1) = x;
+% concentration_bc = zeros(2, ny, nz, ntracer); %first component is w second e
+% % % %concentration_bc(:, 1, 1, 1) = zeros(2, 1);
+% cdot = zeros(nx, ntracer);
+% % %test calls
+% transport_X_fwd(dt, u, kh, concentration, concentration_bc, cdot);
+% lambda = ones(size(concentration));
+% trasport_X_dadj(dt, u, kh, concentration, lambda);
 
 function concentration = transport_Z_fwd(dt, w, kv, concentration, concentration_bc, surfem, volem, depositionvel)
 global ntracer;
@@ -690,7 +711,7 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%adjoints
 %Discrete adjoint model of X transport
-function lambda = trasport_X_dadj(dt, lambda)
+function lambda = trasport_X_dadj(dt, u, kh, concentration, lambda)
 global ntracer;
 global nx;
 global ny;
@@ -708,7 +729,6 @@ for j = 1:ny
         dif = kh(1:nx, j, k);
         
         lambda(:, j, k, :) = adj_advdiff_fdh(dt, nsteps, nx, ntracer, deltax, wind, dif, lam);
-        %disp("next y, z")
     end
 end
 end
