@@ -103,55 +103,55 @@ transport_X_fwd(10000000000, u, kh, concentration, concentration_bc, cdot);
 % disp("Relative error (Frobenius)");
 % disp(norm(numjac' - adj, 'fro')/norm(numjac', 'fro'));
 
-%%%%%%%transport_X_fwd test block
-%%%%%%%the purpose of this test block is to test that transport_X_dadj
-%%%%%%%matches the numerical adjoint of transport_X_fwd
-%%%%%%%set test values
-%%%%%%%verification was successful at time of writing
-ntracer = 1;
-u =  zeros(nx, ny, nz); %wind
-%u(:, 1, 1) = ones(nx, 1);
-kh = zeros(nx, ny, nz); %k
-%kh = 1000*ones(nx, ny, nz);
-concentration = zeros(nx, ny, nz, ntracer);
-x = zeros(nx, 1);
-x(floor(nx/4):floor(nx/2)) = 1;
-concentration(:, 1, 1, 1) = x;
-concentration_bc = zeros(2, ny, nz, ntracer); %first component is w second e
-sb(1, :) = squeeze(concentration_bc(1, 1, 1, 1:ntracer));
-sb(2, :) = squeeze(concentration_bc(2, 1, 1, 1:ntracer));
-cdot = zeros(nx, ntracer);
-dt = 15;
-nstep = floor(dt/300) + 1;
-dx = 1000;
-lam = ones(size(concentration));
-%%%%%%%first test that Transport_X_adj runs without error
-%adj_advdiff_fdh(dt, nstep, nx, ntracer, dx, u, kh, lam);
-%%%%%%%verify with finite differences
-%%%%%%%get numerical jacobian
-n = nx;
-A = eye(n); %grab standard basis vectors from here
-transport_X_fwd(5, u, kh, concentration, concentration_bc, cdot);
-h = 1e-6;
-numjac = zeros(n, n);
-f = @(x) transport_X_fwd(5, u, kh, x, concentration_bc, cdot);
-x0 = concentration;
-i = 1;
-for j = 1:n
-    e = A(:,j);
-    stepf = x0 + h*e;
-    stepb = x0 - h*e;
-    fd = (f(stepf) - f(stepb))/(2*h);
-    numjac(:, j) = fd;
-end
-adj = zeros(n, n); %full adjoint matrix as recovered from adjv products 
-adjv = @(x) adj_advdiff_fdh(dt, nstep, nx, ntracer, dx, u, kh, x);
-for j = 1:n    
-    e = A(:,j);
-    adj(:, j) = adjv(e);
-end
-disp("Relative error (Frobenius)");
-disp(norm(numjac' - adj, 'fro')/norm(numjac', 'fro'));
+% %%%%%%%transport_X_fwd test block
+% %%%%%%%the purpose of this test block is to test that transport_X_dadj
+% %%%%%%%matches the numerical adjoint of transport_X_fwd
+% %%%%%%%this block is still in progress
+% %%%%%%%set test values
+% ntracer = 1;
+% u =  zeros(nx, ny, nz); %wind
+% %u(:, 1, 1) = ones(nx, 1);
+% kh = zeros(nx, ny, nz); %k
+% %kh = 1000*ones(nx, ny, nz);
+% concentration = zeros(nx, ny, nz, ntracer);
+% x = zeros(nx, 1);
+% x(floor(nx/4):floor(nx/2)) = 1;
+% concentration(:, 1, 1, 1) = x;
+% concentration_bc = zeros(2, ny, nz, ntracer); %first component is w second e
+% sb(1, :) = squeeze(concentration_bc(1, 1, 1, 1:ntracer));
+% sb(2, :) = squeeze(concentration_bc(2, 1, 1, 1:ntracer));
+% cdot = zeros(nx, ntracer);
+% dt = 15;
+% nstep = floor(dt/300) + 1;
+% dx = 1000;
+% lam = ones(size(concentration));
+% %%%%%%%first test that Transport_X_adj runs without error
+% %adj_advdiff_fdh(dt, nstep, nx, ntracer, dx, u, kh, lam);
+% %%%%%%%verify with finite differences
+% %%%%%%%get numerical jacobian
+% n = nx;
+% A = eye(n); %grab standard basis vectors from here
+% transport_X_fwd(5, u, kh, concentration, concentration_bc, cdot);
+% h = 1e-6;
+% numjac = zeros(n, n);
+% f = @(x) transport_X_fwd(5, u, kh, x, concentration_bc, cdot);
+% x0 = concentration;
+% i = 1;
+% for j = 1:n
+%     e = A(:,j);
+%     stepf = x0 + h*e;
+%     stepb = x0 - h*e;
+%     fd = (f(stepf) - f(stepb))/(2*h);
+%     numjac(:, j) = fd;
+% end
+% adj = zeros(n, n); %full adjoint matrix as recovered from adjv products 
+% adjv = @(x) adj_advdiff_fdh(dt, nstep, nx, ntracer, dx, u, kh, x);
+% for j = 1:n    
+%     e = A(:,j);
+%     adj(:, j) = adjv(e);
+% end
+% disp("Relative error (Frobenius)");
+% disp(norm(numjac' - adj, 'fro')/norm(numjac', 'fro'));
 
 
 function concentration = transport_Z_fwd(dt, w, kv, concentration, concentration_bc, surfem, volem, depositionvel)
