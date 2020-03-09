@@ -25,6 +25,8 @@ model.n = model.nx;
 fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-12, 'RelTol', 1e-12, 'Jacobian', model.jac);
 [~, y] = MATLODE_SDIRK_FWD_Integrator(model.rhs, model.times, model.x0, fwdoptions);
 xt = y.'; %MATLODE returns integration states as row vectors.
+plot(y)
+pause;
 m = numel(model.times) - 1;
 %x = norm(model.x0)*randn(model.n, m);
 %model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
@@ -87,6 +89,45 @@ model.stateestimate = yc;
 %     x = x + a*dx;
 % end
 
+% %GN Hessian Test Block with full block coarest block L^{-T}, L^{-1} and line search
+% %(Search direction by p = L^{-1}L^{-T}-g)
+% %As of 3/9/20, this seems to be handily beating LBFGS and explicit H
+% %solves
+% x = model.stateestimate(:, 2:end);
+% i = 0;
+% while true
+%     [c, g] = costfcn(x, model);
+%     disp(i);
+%     disp(c);
+%     i = i + 1;
+%     Li = cfullLinv(x, model);
+%     Lit = cfullLinvT(x, model);
+%     dx = Li*Lit*(-g);
+%     a = backtrack(x(:), dx, model);
+%     dx = reshape(dx, model.n, m);
+%     x = x + a*dx;
+% end
+
+% %As of 3/6/20, this is beating LBFGS pretty convincingly by iteration
+% %GN Hessian Test Block with full Hessian and line search
+% %(solves H\-g to get search direction)
+% %coarsest TLM, adj approximations (identity)
+% x = model.stateestimate(:, 2:end);
+% i = 0;
+% while true
+%     [c, g] = costfcn(x, model);
+%     disp(i);
+%     disp(c);
+%     i = i + 1;
+%     H = cfullHessian(x, model);
+%     dx = H\(-g);
+%     a = backtrack(x(:), dx, model);
+%     dx = reshape(dx, model.n, m);
+%     x = x + a*dx;
+% end
+
+%%%%NOTE TO VISHWAS
+%%%%This is the end of the tests we discussed today (3/9/20)
 
 % %%%Verify the Hessian
 % %%%As of 3/9/20, seems to check out
@@ -302,7 +343,7 @@ end
 
 %takes  timespan [t_0, t_1], initial state y, vector v that adjoint model over given
 %parameters should be applied to
-function y = coarseadj(tspan, y, v, model)
+function v = coarseadj(tspan, y, v, model)
 %adjoint run
 %Options  = MATLODE_OPTIONS('AbsTol',model.atol, 'RelTol', model.rtol, 'Lambda', @(t, y) v, 'Jacobian', model.jac, 'ADJ_AbsTol', model.atol, 'ADJ_RelTol', model.rtol);
 Options  = MATLODE_OPTIONS('AbsTol',model.catol, 'RelTol', model.crtol, 'Lambda', @(t, y) v, 'ADJ_AbsTol', model.catol, 'ADJ_RelTol', model.crtol, 'Jacobian', model.jac);
@@ -322,6 +363,34 @@ Options = MATLODE_OPTIONS('Jacobian', model.jac, 'AbsTol', model.catol, 'RelTol'
 [~, ~, sens] = MATLODE_ERK_TLM_Integrator(model.rhs, tspan, y, Options);
 v = sens*v;
 end
+
+
+%takes  timespan [t_0, t_1], initial state y, vector v that adjoint model over given
+%parameters should be applied to
+function v = coarsestadj(tspan, y, v, model)
+%adjoint run
+%Options  = MATLODE_OPTIONS('AbsTol',model.atol, 'RelTol', model.rtol, 'Lambda', @(t, y) v, 'Jacobian', model.jac, 'ADJ_AbsTol', model.atol, 'ADJ_RelTol', model.rtol);
+%Options  = MATLODE_OPTIONS('AbsTol',model.catol, 'RelTol', model.crtol, 'Lambda', @(t, y) v, 'ADJ_AbsTol', model.catol, 'ADJ_RelTol', model.crtol, 'Jacobian', model.jac);
+%[~, ~, v] = MATLODE_ERK_ADJ_Integrator(model.rhs, tspan, y, Options);
+%MATLODE integration returns the initial value (y) and the integrated value
+%as row vectors stacked on top of each other. So, we remove the top row and
+%transpose before returning.
+return;
+end
+
+%takes  timespan [t_0, t_1], initial state y, vector v that TLM over given
+%parameters should be applied to
+function v = coarsesttlm(tspan, y, v, model)
+%tlm run
+%Options = MATLODE_OPTIONS('Jacobian', model.jac, 'AbsTol', model.catol, 'RelTol', model.crtol,'Y_TLM', eye(model.n), 'TLM_AbsTol', model.catol, 'TLM_RelTol',model.crtol);
+%SDIRK TLM seems to break on application to a single input  vector for some
+%reason, so return full sensitivity matrix and apply to v
+%[~, ~, sens] = MATLODE_ERK_TLM_Integrator(model.rhs, tspan, y, Options);
+%v = sens*v;
+return;
+end
+
+
 
 %given timespan [t_0, t_1], initial value y, return system state at t_1
 %starting from state y at t_0
@@ -755,4 +824,133 @@ scale = diag(scale);
 Lnvt = scale*rows;
 end
 
+%%%%Return the full coarse L^{-1} matrix (for testing)
+%%%%Right multiply by sqrt(R) matrices at the end for scaling
+function Lnv = cfullLinv(x, model)
+[n, m] = size(x); %model dim, free vectors
+%each column cell will contain a cell array of that column's blocks
+cols = [];
+col = [];
+for i = 1:m %columns of matrix
+    col = [];
+    for j = 1:i - 1
+        col = [zeros(n, n); col];
+    end
+    col = [col; eye(n)];
+    for j = i + 1:m %rows of column
+        tspan = [model.times(i), model.times(j)];
+        mat = coarsesttlm(tspan, x(:, i), eye(n), model);
+        col = [col; mat];
+    end
+    cols = [cols, col];
+    col = [];
+end
+
+Lnv = cols;
+
+
+%Multiply by scaling matrices on right
+scale = [];
+for i = 1:m %block rows
+    d =  rMat(model.stateestimate(:, i), model);
+    scale = [scale; sqrt(d)];
+end
+scale = diag(scale);
+spy(scale);
+
+Lnv = cols*scale;
+end
+
+
+%%%%Return the full coarse L^{-T} matrix (for testing)
+%%%%Left multiply by sqrt(R) matrices for scaling
+function Lnvt = cfullLinvT(x, model)
+[n, m] = size(x); %model dim, free vectors
+rows = [];
+row = [];
+for i = 1:m %rows of matrix
+    row = [];
+    for j = 1:i - 1
+        row = [zeros(n, n), row];
+    end
+    row = [row, eye(n)];
+    for j = i + 1:m %rows of column
+        tspan = [model.times(i), model.times(j)];
+        mat = coarsestadj(tspan, x(:, i), eye(n), model);
+        row = [row, mat];
+    end
+    rows = [rows; row];
+    row = [];
+end
+
+Lnvt = rows;
+
+
+%Multiply by scaling matrices on right
+scale = [];
+for i = 1:m %block rows
+    d =  rMat(model.stateestimate(:, i), model);
+    scale = [scale; sqrt(d)];
+end
+scale = diag(scale);
+
+Lnvt = scale*rows;
+end
+
+%full GN hessian using coarsest TLM, ADJ approximations (identity)
+function Hes = cfullHessian(x, model)
+diags = {}; %diagonal elements of hessian matrix
+bdiags = {}; %below diagonal elements
+adiags = {}; %above diagonal elements
+m = size(x, 2); %m is the number of free (vectors) along the trajectory
+n = size(x, 1); %n is the dimension of state vectors
+H = sparse(n*m, n*m);
+%build diagonal blocks
+for i = 1:m
+    tspan = [model.times(i), model.times(i+1)];
+    mat = coarsesttlm(tspan, x(:, i), eye(n), model);
+    d = rMat(model.stateestimate(:, i), model);
+    mat = (1./d).*mat;
+    mat = coarsestadj(tspan, x(:,i), mat, model);
+    mat = diag(1./d) + mat;
+    diags{end+1} = mat;
+end
+%build below diagonal blocks
+for i = 2:m
+    d = rMat(model.stateestimate(:, i), model);
+    tspan = [model.times(i - 1), model.times(i)];
+    mat = coarsesttlm(tspan, x(:, i-1), eye(n), model);
+    mat = -diag(1./d) * mat;
+    bdiags{end + 1} = mat;
+end
+%build above diagonal blocks
+for i = 2:m
+    d = rMat(model.stateestimate(:, i), model);
+    tspan = [model.times(i - 1), model.times(i)];
+    mat = coarsestadj(tspan, x(:, i-1), eye(n), model);
+    mat = -mat * diag(1./d);
+    adiags{end + 1} = mat;
+end
+%build full GN Hessian from blocks
+%build top row outside loop
+H(1:n,1:n) = diags{1};
+%If the Hessian has an above diagonal block
+try
+    H(1:n,n+1:2*n) = adiags{1};
+end
+%build bottom row outside loop
+H((m - 1)*n + 1:m*n,(m-1)*n + 1:m*n) = diags{end};
+%If the Hessian has a below diagonal block
+try
+    H((m - 1)*n + 1:m*n,(m-2)*n + 1:(m-1)*n) = bdiags{end};
+end
+%main loop builds all rows except first and last (i.e. those containing all
+%3 blocks)
+for i = 2:m-1
+    H((i-1)*n + 1:i*n,(i-1)*n + 1:i*n) = diags{i};%diagonal blocks
+    H((i-1)*n + 1:i*n,(i-2)*n + 1:(i-1)*n) = bdiags{i}; %below diagonal blocks
+    H((i-1)*n + 1:i*n,i*n + 1:(i+1)*n) = adiags{i};
+end
+Hes = H;
+end
 
