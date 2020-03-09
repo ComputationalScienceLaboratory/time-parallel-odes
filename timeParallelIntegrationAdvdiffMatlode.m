@@ -1,51 +1,150 @@
-model = initIntModel();
+model = initAdvDiffModel();
+%%%%Test that I can do the integrations in one direction with MATLODE
+%%%%Throw out everything but the first x direction
+u = model.wind.u;
+kh = model.kh;
+concentration = model.x0full;
+x = squeeze(model.x0full(:, 1, 1, 1));
+concentration_bc(1, :, :, :) = model.bc.w;
+concentration_bc(2, :, :, :) = model.bc.e;
+%%%%%%%%%%%%%%%%%%%%
+u = squeeze(u(:, 1, 1));
+u = ones(size(u));
+k = squeeze(kh(:, 1, 1));
+%jac = advdiff_jac_fdh(model.nx, model.dx, u, k);
+model.jac = @(t, x) advdiff_jac_fdh(model.nx, model.dx, u, k);
+jac = advdiff_jac_fdh(model.nx, model.dx, u, k);
+bdry(1) = concentration_bc(1, 1, 1, 1);
+bdry(2) = concentration_bc(2, 1, 1, 1);
+model.rhs = @(t, x) jac*x + advdiff_free_fdh(model.nx, model.dx, u, k, bdry);
+model.x0 = zeros(model.nx, 1);
+model.x0(25:50, 1) = 1;
 
-%Calculate true trajectory (for testing and performance examination)
-fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-10, 'RelTol', 1e-10, 'Jacobian', model.jac);
+model.n = model.nx;
+%Calculate reference trajectory
+fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-12, 'RelTol', 1e-12, 'Jacobian', model.jac);
 [~, y] = MATLODE_SDIRK_FWD_Integrator(model.rhs, model.times, model.x0, fwdoptions);
 xt = y.'; %MATLODE returns integration states as row vectors.
 m = numel(model.times) - 1;
-x = 8*randn(model.n, m);
-model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
-xf = x(:);                           %this needs to be updated before each optimization 
+%x = norm(model.x0)*randn(model.n, m);
+%model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
+% xf = x(:);                           %this needs to be updated before each optimization
+
+
+%Do forward Euler for initial forward integration
+yc = zeros(size(y'));
+yc(:, 1) = model.x0;
+for i = 2:model.M
+    yc(:, i) = yc(:, i- 1) + (model.times(i) - model.times(i-1))*model.rhs(model.times(i - 1), yc(:, i - 1));
+end
+model.stateestimate = yc;
+
+%%%%NOTE TO VISHWAS
+%%%%The chunks below here and be block uncommented to run each optimization
+%%%%test.
 
 % %%%Test block for optimization with gradients only, using MATLAB
 % %%%optimizer
-% xtest = xt(:, 2:end);
-% x = xtest + 1*randn(size(xtest));
-% model.stateestimate = [model.x0, x]; 
+% x = model.stateestimate(:, 2:end);
 % cf = @(x) costfcn(x, model);
 % gradfunc = @(x) gradfun(x, model);
-% %findiffverify(xf, cf, gradfunc);
-% optoptions = optimoptions('fminunc', 'MaxIterations', 1250, 'SpecifyObjectiveGradient', true, 'CheckGradients', false, 'Display', 'iter');
+% optoptions = optimoptions('fminunc', 'MaxIterations', 1250, 'SpecifyObjectiveGradient', true, 'CheckGradients', false, 'Display', 'iter', 'StepTolerance', 1e-100);
 % xg = fminunc(cf, x, optoptions);
-% xg = [model.x0, xg];
-% norm(xg - xt)
+
+% %As of 3/6/20, this is beating LBFGS pretty convincingly by iteration
+% %GN Hessian Test Block with full Hessian and line search
+% %(solves H\-g to get search direction)
+% x = model.stateestimate(:, 2:end);
+% i = 0;
+% while true
+%     [c, g] = costfcn(x, model);
+%     disp(i);
+%     disp(c);
+%     i = i + 1;
+%     H = fullHessian(x, model);
+%     dx = H\(-g);
+%     a = backtrack(x(:), dx, model);
+%     dx = reshape(dx, model.n, m);
+%     x = x + a*dx;
+% end
+
+% %GN Hessian Test Block with full block L^{-T}, L^{-1} and line search
+% %(Search direction by p = L^{-1}L^{-T}-g)
+% %As of 3/9/20, this seems to be handily beating LBFGS and explicit H
+% %solves
+% x = model.stateestimate(:, 2:end);
+% i = 0;
+% while true
+%     [c, g] = costfcn(x, model);
+%     disp(i);
+%     disp(c);
+%     i = i + 1;
+%     Li = fullLinv(x, model);
+%     Lit = fullLinvT(x, model);
+%     dx = Li*Lit*(-g);
+%     a = backtrack(x(:), dx, model);
+%     dx = reshape(dx, model.n, m);
+%     x = x + a*dx;
+% end
+
+
+% %%%Verify the Hessian
+% %%%As of 3/9/20, seems to check out
+% A = eye(model.n*m);
+% %xtest = xt + .001*randn(size(xt));
+% %model.stateestimate = xtest;
+% e = 1e-12;
+% maxrelerr = 0;
+% for i = 1:model.n*m
+% j = randi([1, model.n*m], 1, 1);
+% x = reshape(model.stateestimate(:, 2:end), model.n, m);
+% v = A(:, j);
+% v = reshape(v, size(x));
+% g = reshape(gradfun(x, model), model.n, m);
+% x = model.stateestimate(:, 2:end);
+% [~, stepf] = costfcn(x + e * v, model);
+% [~, stepb] = costfcn(x - e * v, model);
+% fd = (stepf - stepb)./(2*e);
+% %s = Linv(x, Linvtrans(x, v, model), model);
+% H = fullHessian(x, model);
+% s = H*v(:);
+% relerr = norm(fd - s(:))/norm(fd);
+% disp(j)
+% disp(relerr)
+% if relerr > maxrelerr
+%    maxrelerr = relerr;
+% end
+% end
+% disp("Max rel err")
+% disp(maxrelerr);
 
 
 % % %%GN Hessian Test Block using Linv, Linvtrans applications and line
 % % search
-% xtest = xt(:, 2:end);
-% x = xtest + 1*randn(size(xtest));
-% model.stateestimate = [model.x0, x]; 
+% %xtest = xt(:, 2:end);
+% x = model.stateestimate(:, 2:end);
+% i = 0;
 % while true
 %     [c, g] = costfcn(x, model);
+%     disp(i)
+%     c
+%     i = i + 1;
 %     g = reshape(gradfun(x, model), model.n, m);
 %     dx = Linv(x, Linvtrans(x, -g, model), model);
 %     a = backtrack(x(:), dx(:), model);
+%     %a = 1;
 %     dx = reshape(dx, model.n, m);
 %     x = x + a*dx;
-%     c
-%     norm(x - xt(:, 2:end))
+%     %norm(x - xt(:, 2:end))
 % end
-% 
+% % % %
 
-% 
+%
 % %%%GN Hessian Test Block using coarse Linv, coarse Linvtrans applications and line
 % %%%search
 % xtest = xt(:, 2:end);
 % x = xtest + 1*randn(size(xtest));
-% model.stateestimate = [model.x0, x]; 
+% model.stateestimate = [model.x0, x];
 % while true
 %     [c, g] = costfcn(x, model);
 %     g = reshape(gradfun(x, model), model.n, m);
@@ -58,37 +157,43 @@ xf = x(:);                           %this needs to be updated before each optim
 % end
 
 
-% % % 
-% % % 
-% %GN Hessian Test Block with full Hessian and line search
-% xtest = xt(:, 2:end);
-% x = xtest + 1*randn(size(xtest));
-% model.stateestimate = [model.x0, x]; 
-% while true
-%     [c, g] = costfcn(x, model);
-%     H = fullHessian(x, model);
-%     dx = H\(-g);
-%     a = backtrack(x(:), dx, model);
-%     dx = reshape(dx, model.n, m);
-%     c
-%     x = x + a*dx;
-%    	norm(x - xt(:, 2:end))
-% end
-% 
+%
 % % %%% Test block comparing Linv, Linvtrans, Hessian solves on random
 % % %%% vectors
-% xtest = xt(:, 2:end);
-% x = xtest + 1*randn(size(xtest));
-% model.stateestimate = [model.x0, x]; 
+% %xtest = xt(:, 2:end);
+% %x = xtest + 1*randn(size(xtest));
+% %model.stateestimate = [model.x0, x];
+% x = model.stateestimate(:, 2:end);
 % while true
 %      mine = 100*randn(size(x));
 %      g = reshape(mine, model.n, m);
 %      dx = Linv(x, Linvtrans(x, g, model), model);
 %      H = fullHessian(x, model);
 %      dx2 = H\mine(:);
-%      norm(dx2(:) - dx(:))
+%      norm(dx2(:) - dx(:))/norm(dx(:))
 % end
-% % 
+% %
+
+% x = model.stateestimate(:, 2:end);
+% H = fullHessian(x, model);
+% Li = fullLinv(x, model);
+% %spy(L)
+% Lit = fullLinvT(x, model);
+% pause;
+% mydim = size(H, 2);
+% prod = zeros(size(H));
+% %should be identity
+% for i = 1:mydim
+% h = reshape(H(:, i), size(x));
+% col = Linv(x, Linvtrans(x, h, model), model);
+% prod(:, i) = col(:);
+% col(:)
+% pause;
+% end
+% norm(prod)
+
+
+
 
 %Return cost function and gradient. Depends on model.stateestimate to form
 %scaling matrices.
@@ -97,7 +202,7 @@ M = numel(model.times) - 1; %number of points from trajectory minus 1 (initial v
 x = reshape(x, model.n, M);
 
 x = [model.x0, x]; %prepend known initial value
-u = zeros(model.n, M); %store cost function integrations. 
+u = zeros(model.n, M); %store cost function integrations.
 u = [model.x0, x]; %prepend known initial value to make indices line up
 diffs = zeros(size(u)); %to store differences between integration values
 scaleddiffs = zeros(size(diffs)); %differences with scaling matrices applied
@@ -105,7 +210,7 @@ adj = zeros(model.n, M + 1); %adjoint applied to appropriately scaled difference
 G = zeros(model.n, M + 1); %to store gradient vectors. will be flattened before return.
 %cost function integrations (integrate estimated system states forward one
 %step each)
-parfor i = 2:M + 1
+for i = 2:M + 1
     u(:, i) = fwdmodel([model.times(i - 1), model.times(i)], x(:, i - 1), model);
     diffs(:, i) = x(:, i) - u(:, i);
     d = rMat(model.stateestimate(:, i), model); %diagonal elements of scaling matrix
@@ -114,19 +219,19 @@ end
 %Sum cost function terms
 c = 0;
 for i = 1:M + 1
-   c = c + diffs(:, i).'*scaleddiffs(:, i);
+    c = c + diffs(:, i).'*scaleddiffs(:, i);
 end
 c = c/2;
 
 %Calculate gradients
 %Adjoint model runs
-parfor i = 2:M
-   v = diffs(:, i + 1);
-   d = rMat(model.stateestimate(:, i + 1), model); %diagonal elements of scaling matrix
-   v = (1./d).*diffs(:, i+1);  %inverse of diagonal matrix
-   t = [model.times(i), model.times(i + 1)];
-   v = adjmodel(t, x(:, i), v, model);
-   adj(:, i) = v;
+for i = 2:M
+    v = diffs(:, i + 1);
+    d = rMat(model.stateestimate(:, i + 1), model); %diagonal elements of scaling matrix
+    v = (1./d).*diffs(:, i+1);  %inverse of diagonal matrix
+    t = [model.times(i), model.times(i + 1)];
+    v = adjmodel(t, x(:, i), v, model);
+    adj(:, i) = v;
 end
 
 for i = 2:M + 1
@@ -138,7 +243,7 @@ return;
 
 end
 
-%Given u, return the diagonal of the diagonal scaling matrix given in Vishwas 
+%Given u, return the diagonal of the diagonal scaling matrix given in Vishwas
 %& Sandu.
 %return ones to give identity matrix (for testing)
 function d = rMat(u, model)
@@ -233,18 +338,21 @@ end
 
 %to set up the system resulting from the cholesky decomposition applied to
 % the GN system, we need the applications of the resulting L^-1 and L^-T
-% matrices. This function returns the application of L^-T applied to v. 
+% matrices. This function returns the application of L^-T applied to v.
 function Lntv = Linvtrans(x, v, model)
-m = size(v, 2); 
+m = size(v, 2);
 
 Lntv = v(:, m);
 times = model.times;
 for j = (m - 1):-1:1 %outer loop represents row in L^-T matrix. Scale after integrations
+    %disp(j);
     lambda = v(:, j);
-    for i = j:m - 1
+    for i = m-1:-1:j
+        %disp(i);
         tspan = [times(i), times(i+1)];
-        lambda = adjmodel(tspan, x(:, i), lambda, model);
+        lambda = adjmodel(tspan, x(:, i), lambda + v(:, i), model);
     end
+    lambda = lambda + v(:, j);
     Lntv = [lambda, Lntv];
 end
 Lntv = reshape(Lntv, model.n, m);
@@ -260,23 +368,23 @@ end
 % the GN system, we need the applications of the resulting L^-1 and L^-T
 % matrices. This function returns the application of L^-T applied to v.
 function Lnv = Linv(x, v, model)
-m = size(v, 2); 
+m = size(v, 2);
 
-%apply scaling components before TLM runs 
+%apply scaling components before TLM runs
 for i = 1:m
     d = rMat(model.stateestimate(:, i), model);
     v(:, i) = sqrt(d).*v(:, i);
 end
 
 
-s
+
 Lnv = v(:, 1);
 times = model.times;
 %outer loop represents row in L^-1 matrix. Scale after integrations.
 %since the first row applied to V is simply v(:, 1), we start at 2.
-for j = 2:m  
+for j = 1:m-1
     xi = v(:, 1);
-    for i = 1:j-1
+    for i = 1:j
         tspan = [times(i), times(i+1)];
         xi = tlmmodel(tspan, x(:, i), xi, model);
     end
@@ -293,9 +401,9 @@ end
 % the GN system, we need the applications of the resulting L^-1 and L^-T
 % matrices. This function returns the application of L^-T applied to v.
 function Lnv = cLinv(x, v, model)
-m = size(v, 2); 
+m = size(v, 2);
 
-%apply scaling components before TLM runs 
+%apply scaling components before TLM runs
 parfor i = 1:m
     d = rMat(model.stateestimate(:, i), model);
     v(:, i) = sqrt(d).*v(:, i);
@@ -307,7 +415,7 @@ Lnv = v(:, 1);
 times = model.times;
 %outer loop represents row in L^-1 matrix. Scale after integrations.
 %since the first row applied to V is simply v(:, 1), we start at 2.
-parfor j = 2:m  
+parfor j = 2:m
     xi = v(:, 1);
     for i = 1:j-1
         tspan = [times(i), times(i+1)];
@@ -323,9 +431,9 @@ end
 
 %to set up the system resulting from the cholesky decomposition applied to
 % the GN system, we need the applications of the resulting L^-1 and L^-T
-% matrices. This function returns the application of L^-T applied to v. 
+% matrices. This function returns the application of L^-T applied to v.
 function Lntv = cLinvtrans(x, v, model)
-m = size(v, 2); 
+m = size(v, 2);
 
 Lntv = v(:, m);
 times = model.times;
@@ -367,19 +475,19 @@ for i = 1:m
 end
 %build below diagonal blocks
 for i = 2:m
-   d = rMat(model.stateestimate(:, i), model);
-   tspan = [model.times(i), model.times(i+1)];
-   mat = tlmmodel(tspan, x(:, i), eye(n), model);
-   mat = diag(1./d) * mat;
-   bdiags{end + 1} = mat;
+    d = rMat(model.stateestimate(:, i), model);
+    tspan = [model.times(i - 1), model.times(i)];
+    mat = tlmmodel(tspan, x(:, i-1), eye(n), model);
+    mat = -diag(1./d) * mat;
+    bdiags{end + 1} = mat;
 end
 %build above diagonal blocks
 for i = 2:m
-   d = rMat(model.stateestimate(:, i), model);
-   tspan = [model.times(i), model.times(i+1)];
-   mat = adjmodel(tspan, x(:, i), eye(n), model);
-   mat = mat * diag(1./d);
-   adiags{end + 1} = mat;
+    d = rMat(model.stateestimate(:, i), model);
+    tspan = [model.times(i - 1), model.times(i)];
+    mat = adjmodel(tspan, x(:, i-1), eye(n), model);
+    mat = -mat * diag(1./d);
+    adiags{end + 1} = mat;
 end
 %build full GN Hessian from blocks
 %build top row outside loop
@@ -389,48 +497,262 @@ try
     H(1:n,n+1:2*n) = adiags{1};
 end
 %build bottom row outside loop
-H((m - 1)*n + 1:m*n,(m-1)*n + 1:m*n) = diags{1};
+H((m - 1)*n + 1:m*n,(m-1)*n + 1:m*n) = diags{end};
 %If the Hessian has a below diagonal block
 try
-    H((m - 1)*n + 1:m*n,(m-2)*n + 1:(m-1)*n) = bdiags{1};
+    H((m - 1)*n + 1:m*n,(m-2)*n + 1:(m-1)*n) = bdiags{end};
 end
 %main loop builds all rows except first and last (i.e. those containing all
 %3 blocks)
 for i = 2:m-1
-    H((i-1)*n + 1:i*n,(i-1)*n + 1:i*n) = diags{1};%diagonal blocks
-    H((i-1)*n + 1:i*n,(i-2)*n + 1:(i-1)*n) = bdiags{1}; %below diagonal blocks
-    H((i-1)*n + 1:i*n,i*n + 1:(i+1)*n) = adiags{1};
+    H((i-1)*n + 1:i*n,(i-1)*n + 1:i*n) = diags{i};%diagonal blocks
+    H((i-1)*n + 1:i*n,(i-2)*n + 1:(i-1)*n) = bdiags{i}; %below diagonal blocks
+    H((i-1)*n + 1:i*n,i*n + 1:(i+1)*n) = adiags{i};
 end
 Hes = H;
 end
 
 %for use with finite difference verification routine
 function G = gradfun(x, model)
-    [c, G] = costfcn(x, model);
-    return;
+[c, G] = costfcn(x, model);
+return;
 end
 
 
 
 function a = backtrack(x, p, model)
-r = .9;
-c = 1e-4;
+r = .1;
+c = 1e-8;
 a = 1; %initial step size
 %af = 0;
+
 while true
-[f, g] = costfcn(x, model);
-try
-[af, ag] = costfcn(x +  a*p, model);
+    
+    [f, g] = costfcn(x, model);
+    try
+        [af, ag] = costfcn(x +  a*p, model);
+        
+        if imag(af) == 0 && af <= (f + c*a*(g.'*p))
+            break
+        end
+        
+    end
+    
+    if a < numel(x)*eps
+        break
+    end
+    
+    a = r*a;
+    %disp(a)
+    
+end
 
-if imag(af) == 0 && af <= (f + c*a*(g.'*p))
-    break
-end
-end
-if a < numel(x)*eps
-    break
 end
 
-a = r*a;
+
+
+function b = advdiff_free_fdh(n, dx, u, k, bdry)
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+% Advection-diffusion derivative function
+% Free term B such that: c' = Fun_fdh = Jac_fdh*c + B
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ap = -1/6;
+bp = 1;
+cp = -1/2;
+dp = -1/3;
+an = 1/3;
+bn = 1/2;
+cn = -1;
+dn = 1/6;
+
+b = zeros(n, 1);
+
+%the advection discretization
+if u(1) >= 0
+    b(1) = bdry(1)*u(1)/dx + 2*k(1)*bdry(1)/(2*dx^2);
+end
+if u(2) >= 0
+    b(2) = ap*bdry(1)*u(1)/dx;
+end
+if u(n-1) < 0
+    b(n-1) = dn*bdry(2)*u(n)/dx;
+end
+if u(n) < 0
+    b(n) = -bdry(2)*u(n)/dx + 2*k(n)* bdry(2)/(2*dx^2);
 end
 
 end
+
+
+function jac = advdiff_jac_fdh(n, dx, u, k)
+ku = 2;
+kl = 2;
+
+ap = -1/6;
+bp = 1;
+cp = -1/2;
+dp = -1/3;
+an = 1/3;
+bn = 1/2;
+cn = -1;
+dn = 1/6;
+
+%5 rows of banded Jacobian
+%used to build sparse pentadiagonal jacobian below
+jac = zeros(5, n);
+
+%advection discretization
+if u(1) >= 0
+    jac(jrow(1, 1), 1) = -u(1)/dx;
+else
+    jac(jrow(1, 1), 1) = u(1)/dx;
+    jac(jrow(1, 2), 2) = -u(2)/dx;
+end
+
+for i=2:n-1
+    if u(i) >= 0
+        if i > 2
+            jac(jrow(i, i-2), i-2) = ap*u(i-2)/dx;
+        end
+        jac(jrow(i, i-1), i-1) = bp*u(i-1)/dx;
+        jac(jrow(i, i), i) = cp*u(i)/dx;
+        jac(jrow(i, i+1), i+1) = dp*u(i+1)/dx;
+    else
+        jac(jrow(i, i-1), i-1) = an*u(i-1)/dx;
+        jac(jrow(i, i), i) = bn*u(i)/dx;
+        jac(jrow(i, i+1), i+1) = cn*u(i+1)/dx;
+        if i < n - 1
+            jac(jrow(i, i+2), i+2) = dn*u(i+2)/dx;
+        end
+    end
+end
+
+if u(n) >= 0
+    jac(jrow(n, n-1), n-1) = u(n-1)/dx;
+    jac(jrow(n, n), n) = -u(n)/dx;
+else
+    jac(jrow(n, n), n) = u(n)/dx;
+end
+
+
+%the diffusion part
+if u(1) >= 0 %inflow
+    jac(jrow(1, 1), 1) = jac(jrow(1, 1), 1) ...
+        - (k(2) + 3*k(1))/(2*dx^2);
+    jac(jrow(1, 2), 2) = jac(jrow(1, 2), 2) ...
+        + (k(1) + k(2))/(2*dx^2);
+else %outflow
+    jac(jrow(1, 1), 1) = jac(jrow(1, 1), 1) - (k(1) + k(2))/(2*dx^2);
+    jac(jrow(1, 2), 2) = jac(jrow(1, 2), 2) + (k(1) + k(2))/(2*dx^2);
+end
+
+for i = 2:n-1
+    jac(jrow(i, i-1), i-1) = jac(jrow(i, i-1), i-1) ...
+        + (k(i) + k(i - 1))/(2*dx^2);
+    jac(jrow(i, i), i) = jac(jrow(i, i), i) ...
+        - (k(i+1) + 2*k(i) + k(i-1))/(2*dx^2);
+    jac(jrow(i, i+1), i+1) = jac(jrow(i, i+1), i+1) ...
+        + (k(i+1) + k(i))/(2*dx^2);
+end
+
+if u(n) >= 0 %outflow
+    jac(jrow(n, n-1), n-1) = jac(jrow(n, n-1), n-1) ...
+        + (k(n) + k(n-1))/(2*dx^2);
+    jac(jrow(n, n), n) = jac(jrow(n, n), n) ...
+        - (k(n) + k(n-1))/(2*dx^2);
+else %inflow
+    jac(jrow(n, n-1), n-1) = jac(jrow(n, n-1), n-1)...
+        + (k(n) + k(n-1))/(2*dx^2);
+    jac(jrow(n, n), n) = jac(jrow(n, n), n) ...
+        - (3*k(n) + k(n-1))/(2*dx^2);
+end
+
+jac = spdiags(jac', 2:-1:-2, n, n);
+return;
+end
+
+function c = jrow(i, j)
+kl = 2;
+ku = 2;
+if i <= 0 || j <= 0
+    disp("error in advdiff_jac_fdh")
+    return
+end
+c = ku + 1 + i - j;
+end
+
+
+%%%%Return the full L^{-1} matrix (for testing)
+%%%%Right multiply by sqrt(R) matrices at the end for scaling
+function Lnv = fullLinv(x, model)
+[n, m] = size(x); %model dim, free vectors
+%each column cell will contain a cell array of that column's blocks
+cols = [];
+col = [];
+for i = 1:m %columns of matrix
+    col = [];
+    for j = 1:i - 1
+        col = [zeros(n, n); col];
+    end
+    col = [col; eye(n)];
+    for j = i + 1:m %rows of column
+        tspan = [model.times(i), model.times(j)];
+        mat = tlmmodel(tspan, x(:, i), eye(n), model);
+        col = [col; mat];
+    end
+    cols = [cols, col];
+    col = [];
+end
+
+Lnv = cols;
+
+
+%Multiply by scaling matrices on right
+scale = [];
+for i = 1:m %block rows
+    d =  rMat(model.stateestimate(:, i), model);
+    scale = [scale; sqrt(d)];
+end
+scale = diag(scale);
+spy(scale);
+
+Lnv = cols*scale;
+end
+
+
+%%%%Return the full L^{-T} matrix (for testing)
+%%%%Left multiply by sqrt(R) matrices for scaling
+function Lnvt = fullLinvT(x, model)
+[n, m] = size(x); %model dim, free vectors
+rows = [];
+row = [];
+for i = 1:m %rows of matrix
+    row = [];
+    for j = 1:i - 1
+        row = [zeros(n, n), row];
+    end
+    row = [row, eye(n)];
+    for j = i + 1:m %rows of column
+        tspan = [model.times(i), model.times(j)];
+        mat = adjmodel(tspan, x(:, i), eye(n), model);
+        row = [row, mat];
+    end
+    rows = [rows; row];
+    row = [];
+end
+
+Lnvt = rows;
+
+
+%Multiply by scaling matrices on right
+scale = [];
+for i = 1:m %block rows
+    d =  rMat(model.stateestimate(:, i), model);
+    scale = [scale; sqrt(d)];
+end
+scale = diag(scale);
+
+Lnvt = scale*rows;
+end
+
+

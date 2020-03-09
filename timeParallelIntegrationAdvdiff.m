@@ -1,13 +1,19 @@
-model = initIntModel();
+%Try to build the model object and call the advdiff_fdh function without
+%crashing.
+%Start with only x
+%Take first coordinate of everything
+model = initAdvDiffModel();
+c = squeeze(model.x0(:, 1, 1, :));
+sb(1, :) = model.bc.w(1, 1, :);
+sb(2, :) = model.bc.e(1, 1, :);
+dif = squeeze(model.kh(:, 1, 1));
+wind = model.wind.u(:, 1, 1);
 
-%Calculate true trajectory (for testing and performance examination)
-fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-10, 'RelTol', 1e-10, 'Jacobian', model.jac);
-[~, y] = MATLODE_SDIRK_FWD_Integrator(model.rhs, model.times, model.x0, fwdoptions);
-xt = y.'; %MATLODE returns integration states as row vectors.
-m = numel(model.times) - 1;
-x = 8*randn(model.n, m);
-model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
-xf = x(:);                           %this needs to be updated before each optimization 
+c = advdiff_fdh(model.dt, model.M, model.nx, model.ntracer, model.dx, wind, dif, c, sb);
+
+
+
+
 
 % %%%Test block for optimization with gradients only, using MATLAB
 % %%%optimizer
@@ -269,7 +275,7 @@ for i = 1:m
 end
 
 
-s
+
 Lnv = v(:, 1);
 times = model.times;
 %outer loop represents row in L^-1 matrix. Scale after integrations.
@@ -434,3 +440,265 @@ a = r*a;
 end
 
 end
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Below here are the advection/diffusion code functions.
+%They are used in the forward, tlm, adjoint model functions above.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function dc = advdiff_fun_fdh(n, dx, u, k, bdry, c, dc)
+global ntracer;
+global nx;
+global ny;
+global nz;
+
+ap = -1/6;
+bp = 1;
+cp = - 1/2;
+dp = -1/3;
+an = 1/3;
+bn = 1/2;
+cn = -1;
+dn = 1/6;
+
+for j = 1:ntracer
+    
+    F = c(:, j).*u;
+    F = [bdry(1, j)*u(1); F];
+    F = [F; bdry(2, j)*u(nx)];
+    
+    %advection discretization
+    if u(1) >= 0 %inflow
+        dc(1, j) = (F(1) - F(2))/dx;
+    else %outflow
+        dc(1, j) = (F(2) - F(3))/dx;
+    end
+    
+    for i = 3:n %array indices for F are shifted by 1 in MATLAB
+        if u(i) >= 0 %inflow
+            dc(i - 1, j) = (ap*F(i-2) + bp*F(i - 1) + cp*F(i) + dp*F(i+1))/dx;
+        else
+            dc(i - 1, j) = (an*F(i - 1) + bn*F(i) + cn*F(i+1)+dn*F(i+2))/dx;
+        end
+    end
+    
+    if u(n) >= 0 %outflow
+        dc(n, j) = (F(n) - F(n + 1))/dx;
+    else
+        dc(n, j) = ((F(n + 1) - F(n + 2)))/dx;
+    end
+    
+    %the diffusion part
+    if u(1) >= 0 %inflow
+        dc(1, j) = dc(1, j) + ( (k(1) + k(2)) * (c(2, j) - c(1, j)) ...
+            - 2*k(1)*(c(1, j) - bdry(1, j)))/(2*dx^2);
+    else %outflow
+        dc(1, j) = dc(1, j) + ( (k(1) + k(2))*(c(2, j) - c(1, j)))/(2*dx^2);
+    end
+    
+    for i=2:n-1
+        dc(i, j) = dc(i, j) + ((k(i+1) + k(i))*(c(i+1, j) - c(i, j)) ...
+            - (k(i) + k(i-1))*(c(i, j) - c(i-1, j)))/(2*dx^2);
+    end
+    
+    if u(n) >= 0 %outflow
+        dc(n, j) = dc(n, j) + ( ...
+            - (k(n) + k(n-1))*(c(n, j)-c(n-1, j)) ...
+            )/(2*dx^2);
+    else %inflow
+        dc(n, j) = dc(n, j) + ( 2*k(n)*(bdry(2, j) - c(n, j)) ...
+            - (k(n) - k(n-1))*(c(n, j) - c(n - 1, j)) ...
+            )/(2*dx^2);
+    end
+    
+end %j (1:ntracer)
+return;
+end
+
+
+function jac = advdiff_jac_fdh(n, dx, u, k)
+ku = 2;
+kl = 2;
+
+ap = -1/6;
+bp = 1;
+cp = -1/2;
+dp = -1/3;
+an = 1/3;
+bn = 1/2;
+cn = -1;
+dn = 1/6;
+
+%5 rows of banded Jacobian
+%used to build sparse pentadiagonal jacobian below
+jac = zeros(5, n);
+
+%advection discretization
+if u(1) >= 0
+    jac(jrow(1, 1), 1) = -u(1)/dx;
+else
+    jac(jrow(1, 1), 1) = u(1)/dx;
+    jac(jrow(1, 2), 2) = -u(2)/dx;
+end
+
+for i=2:n-1
+    if u(i) >= 0
+        if i > 2
+            jac(jrow(i, i-2), i-2) = ap*u(i-2)/dx;
+        end
+        jac(jrow(i, i-1), i-1) = bp*u(i-1)/dx;
+        jac(jrow(i, i), i) = cp*u(i)/dx;
+        jac(jrow(i, i+1), i+1) = dp*u(i+1)/dx;
+    else
+        jac(jrow(i, i-1), i-1) = an*u(i-1)/dx;
+        jac(jrow(i, i), i) = bn*u(i)/dx;
+        jac(jrow(i, i+1), i+1) = cn*u(i+1)/dx;
+        if i < n - 1
+            jac(jrow(i, i+2), i+2) = dn*u(i+2)/dx;
+        end
+    end
+end
+
+if u(n) >= 0
+    jac(jrow(n, n-1), n-1) = u(n-1)/dx;
+    jac(jrow(n, n), n) = -u(n)/dx;
+else
+    jac(jrow(n, n), n) = u(n)/dx;
+end
+
+
+%the diffusion part
+if u(1) >= 0 %inflow
+    jac(jrow(1, 1), 1) = jac(jrow(1, 1), 1) ...
+        - (k(2) + 3*k(1))/(2*dx^2);
+    jac(jrow(1, 2), 2) = jac(jrow(1, 2), 2) ...
+        + (k(1) + k(2))/(2*dx^2);
+else %outflow
+    jac(jrow(1, 1), 1) = jac(jrow(1, 1), 1) - (k(1) + k(2))/(2*dx^2);
+    jac(jrow(1, 2), 2) = jac(jrow(1, 2), 2) + (k(1) + k(2))/(2*dx^2);
+end
+
+for i = 2:n-1
+    jac(jrow(i, i-1), i-1) = jac(jrow(i, i-1), i-1) ...
+        + (k(i) + k(i - 1))/(2*dx^2);
+    jac(jrow(i, i), i) = jac(jrow(i, i), i) ...
+        - (k(i+1) + 2*k(i) + k(i-1))/(2*dx^2);
+    jac(jrow(i, i+1), i+1) = jac(jrow(i, i+1), i+1) ...
+        + (k(i+1) + k(i))/(2*dx^2);
+end
+
+if u(n) >= 0 %outflow
+    jac(jrow(n, n-1), n-1) = jac(jrow(n, n-1), n-1) ...
+        + (k(n) + k(n-1))/(2*dx^2);
+    jac(jrow(n, n), n) = jac(jrow(n, n), n) ...
+        - (k(n) + k(n-1))/(2*dx^2);
+else %inflow
+    jac(jrow(n, n-1), n-1) = jac(jrow(n, n-1), n-1)...
+        + (k(n) + k(n-1))/(2*dx^2);
+    jac(jrow(n, n), n) = jac(jrow(n, n), n) ...
+        - (3*k(n) + k(n-1))/(2*dx^2);
+end
+
+jac = spdiags(jac', 2:-1:-2, n, n);
+return;
+end
+
+function c = jrow(i, j)
+kl = 2;
+ku = 2;
+if i <= 0 || j <= 0
+    disp("error in advdiff_jac_fdh")
+    return
+end
+c = ku + 1 + i - j;
+end
+
+
+function c = advdiff_fdh(dt, nstep, n, nspec, dx, u, k, c, bdry)
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%  Performs Nstep timesteps of length DT
+%      to solve the adv_diff equation using a
+%      linearly implicit Crank-Nicholson time discretization
+%
+%  n   = no. of grid points
+%  nspec = no. of chemical species
+%  nstep = no of time steps
+%  x(1:N) = grid point coordinates
+%  u(1:N) = wind speeds
+%  k(1:N) = diffusion coefficients
+%  surfaceem  = Surface Emission intensity
+%  volumeem   = Elevated Emission intensity
+%  vd    = deposition velocity
+%  c     = concentration of each species
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+kl = 2;
+ku = 2;
+ldjac = kl+ku+1;
+lda = 2*kl+ku+1;
+jac = zeros(n, n);
+A = zeros(n, n);
+ctmp = zeros(n, 1);
+b = zeros(n, 1);
+d = zeros(2, 1);
+
+jac = advdiff_jac_fdh(n, dx, u, k);
+A = -(dt/2)*jac;
+A = A + eye(n);
+
+for ispec=1:nspec
+    for istep=1:nstep
+        ctmp = c(:, ispec);
+        %plot(ctmp)
+        %pause;
+        d = bdry(:, ispec);
+        %the free term
+        b = advdiff_free_fdh(n, dx, u, k, d);
+        ctmp = ctmp + dt*b;
+        alpha = (dt/2);
+        ctmp = alpha*jac*c(:, ispec) + ctmp;
+        ctmp = A\ctmp;
+        c(:, ispec) = ctmp;
+        %wrap around
+        %c(2, :) = c(n, :);
+        %c(1, :) = c(n-1,:);
+    end
+    %disp("next step");
+end
+end
+
+
+
+
+function b = advdiff_free_fdh(n, dx, u, k, bdry)
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+% Advection-diffusion derivative function
+% Free term B such that: c' = Fun_fdh = Jac_fdh*c + B
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ap = -1/6;
+bp = 1;
+cp = -1/2;
+dp = -1/3;
+an = 1/3;
+bn = 1/2;
+cn = -1;
+dn = 1/6;
+
+b = zeros(n, 1);
+
+%the advection discretization
+if u(1) >= 0
+    b(1) = bdry(1)*u(1)/dx + 2*k(1)*bdry(1)/(2*dx^2);
+end
+if u(2) >= 0
+    b(2) = ap*bdry(1)*u(1)/dx;
+end
+if u(n-1) < 0
+    b(n-1) = dn*bdry(2)*u(n)/dx;
+end
+if u(n) < 0
+    b(n) = -bdry(2)*u(n)/dx + 2*k(n)* bdry(2)/(2*dx^2);
+end
+
+end
+
