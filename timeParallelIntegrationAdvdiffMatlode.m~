@@ -2,13 +2,13 @@ model = initAdvDiffModel();
 %%%%%%%%%%%%%%Moving to 2D test problem
 %build initial concentration
 concentration = zeros(model.nx, model.ny, model.nz, model.ntracer);
-cntr = [60, 60];
-rad = 1;
+cntr = [20, 20];
+rad = 3;
 for i = 1:model.nx
     for j = 1:model.ny
         pt = [i, j];
         if(norm(pt - cntr) <= rad)
-            concentration(i, j, 1, 1) = 2;
+           concentration(i, j, 1, 1) = 2; 
         end
     end
 end
@@ -17,113 +17,54 @@ model.x0 = concentration;
 % pause;
 %clf;
 
-% %build diffusion coefficients
-% model.kh = 1000*ones(size(model.kh));
-% model.kv = 1000*ones(size(model.kv));
-
 %%%%%I want to build the wind profiles now
-omega = 1;
+omega = 2;
 windcntr = [50, 50];
 u = zeros(model.nx, model.ny, model.nz, model.ntracer);
 v = zeros(model.nx, model.ny, model.nz, model.ntracer);
 for i = 1:model.nx
     for j = 1:model.ny
-        u(i, j, 1, 1) = -omega*(j - windcntr(2));
-        v(i, j, 1, 1) = omega*(i - windcntr(1));
-    end
-end
-model.u = u;
-model.v = v;
-quiver(v(:, :, 1, 1),u(:, :, 1, 1))
-hold on
-contour(concentration(:, :, 1, 1));
-hold off
-while true
-concentration = transport_X_fwd(concentration, model);
-quiver(v(:, :, 1, 1),u(:, :, 1, 1))
-hold on
-contour(concentration(:, :, 1, 1));
-pause(5/1000);
-hold off
-pause(5/1000);
-
-concentration = transport_Y_fwd(concentration, model);
-quiver(v(:, :, 1, 1),u(:, :, 1, 1))
-hold on
-contour(concentration(:, :, 1, 1));
-pause(5/1000);
-hold off
-
-end
-%%%%%%%%end of 2d problem test code
-%%%%%%%%2d problem 1d transport functions
-function concentration = transport_Y_fwd(concentration, model)
-% dx = model.dx;
-% deltax = dx;
-%nsteps = floor(dt/300)+1;
-%deltat = dt/nsteps;
-
-for i = 1:model.nx
-    for k = 1:model.nz
-        conc = squeeze(concentration(i, :, k, :))';
-        wind = model.v(i, :, k);
-        dif = model.kh(i, :, k);
-        sb(1, :) = squeeze(model.bc.s(i, k, :));
-        sb(2, :) = squeeze(model.bc.n(i, k, :));
-        %for l = 1:nsteps
-        %specify RHS, Jacobian
-        jac = advdiff_jac_fdh(model.ny, model.dy, wind, dif);
-        model.jac = @(t, x) jac;
-        model.rhs = @(t, x) jac*x + advdiff_free_fdh(model.ny, model.dy, wind, dif, sb);
-        %pass to MATLODE
-        fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-3, 'RelTol', 1e-3);
-        [~, y] = MATLODE_ERK_FWD_Integrator(model.rhs, model.times, conc, fwdoptions);
-        xt = y(end, :).'; %MATLODE returns integration states as row vectors.
-        
-        
-        %end
-        concentration(i, :, k, :) = subplus(xt)'; %positive part
-        %disp("next y, z")
+        v(i, j, 1, 1) = -omega*(j - windcntr(2));
+        u(i, j, 1, 1) = omega*(i - windcntr(1));
     end
 end
 
-return;
-end
+% quiver(u(:, :, 1, 1),v(:, :, 1, 1))
+% pause
 
 
-function concentration = transport_X_fwd(concentration, model)
-dx = model.dx;
+function concentration = transport_X_fwd(dt, u, kh, concentration, concentration_bc,  cdot)
+global ntracer;
+global nx;
+global ny;
+global nz;
+
+dx = 100;
 deltax = dx;
-%nsteps = floor(dt/300)+1;
-%deltat = dt/nsteps;
+nsteps = floor(dt/300)+1;
+deltat = dt/nsteps;
 
-for j = 1:model.ny
-    for k = 1:model.nz
-        conc = squeeze(concentration(:, j, k, :));
-        wind = model.u(:, j, k);
-        dif = model.kh(:, j, k);
-        sb(1, :) = squeeze(model.bc.w(j, k, :));
-        sb(2, :) = squeeze(model.bc.e(j, k, :));
-        %for l = 1:nsteps
-        %specify RHS, Jacobian
-        jac = advdiff_jac_fdh(model.nx, model.dx, wind, dif);
-        model.jac = @(t, x) jac;
-        model.rhs = @(t, x) jac*x + advdiff_free_fdh(model.nx, model.dx, wind, dif, sb);
-        %pass to MATLODE
-        fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-3, 'RelTol', 1e-3);
-        [~, y] = MATLODE_ERK_FWD_Integrator(model.rhs, model.times, conc, fwdoptions);
-        xt = y(end, :).'; %MATLODE returns integration states as row vectors.
-        
-        
-        %end
-        concentration(:, j, k, :) = subplus(xt)'; %positive part
+for j = 1:ny
+    for k = 1:nz
+        conc = squeeze(concentration(1:nx, j, k, 1:ntracer))';
+        wind = u(1:nx, j, k);
+        dif = kh(1:nx, j, k);
+        sb(1, :) = squeeze(concentration_bc(1, j, k, 1:ntracer));
+        sb(2, :) = squeeze(concentration_bc(2, j, k, 1:ntracer));
+        for l = 1:nsteps
+            jac = advdiff_jac_fdh(model.nx, model.dx, u, dif);
+
+            model.rhs = @(t, x) jac*x + advdiff_free_fdh(model.nx, model.dx, u, k, sb);
+
+            
+        end
+        concentration(1:nx, j, k, 1:ntracer) = subplus(conc)'; %positive part
         %disp("next y, z")
     end
 end
 
-return;
 end
-%%%%%%%%%%end of 2d problem 1d transport functions
+
 
 % %%%%Test that I can do the integrations in one direction with MATLODE
 % %%%%Throw out everything but the first x direction
@@ -145,7 +86,7 @@ end
 % model.rhs = @(t, x) jac*x + advdiff_free_fdh(model.nx, model.dx, u, k, bdry);
 % model.x0 = zeros(model.nx, 1);
 % model.x0(25:50, 1) = 1;
-%
+% 
 % model.n = model.nx;
 % %Calculate reference trajectory
 % fwdoptions = MATLODE_OPTIONS('AbsTol', 1e-12, 'RelTol', 1e-12, 'Jacobian', model.jac);
@@ -157,8 +98,8 @@ end
 % %x = norm(model.x0)*randn(model.n, m);
 % %model.stateestimate = [model.x0, x]; %store initial model estimate for cost function calculations.
 % % xf = x(:);                           %this needs to be updated before each optimization
-%
-%
+% 
+% 
 % %Do forward Euler for initial forward integration
 % yc = zeros(size(y'));
 % yc(:, 1) = model.x0;

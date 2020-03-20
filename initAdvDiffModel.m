@@ -1,10 +1,10 @@
 function [model] = initAdvDiffModel()
 model.nx = 100; %model dimension
 model.ny = 100;
-model.nz = 100;
+model.nz = 1;
 model.ntracer = 1;
 
-tspan = [0, 1]; %full integration timespan
+tspan = [0, 15]; %full integration timespan
 model.tspan = tspan;
 model.dt = model.tspan(2) - model.tspan(1);
 
@@ -20,13 +20,14 @@ model.stateestimate = zeros(model.nx, model.ny, model.nz, model.ntracer, M);
 %fixed before optimization).
 
 %wind tensors
+omega = 1;
 model.wind.u = randn(model.nx, model.ny, model.nz);
 model.wind.v = randn(model.nx, model.ny, model.nz);
 model.wind.w = randn(model.nx, model.ny, model.nz);
 
 %diffusion coefficients
-model.kh = randn(model.nx, model.ny, model.nz);
-model.kv = randn(model.nx, model.ny, model.nz);
+model.kh = zeros(model.nx, model.ny, model.nz);
+model.kv = zeros(model.nx, model.ny, model.nz);
 
 %boundary conditions
 model.bc.w = zeros(model.ny, model.nz, model.ntracer);
@@ -36,9 +37,9 @@ model.bc.n = zeros(model.nx, model.nz, model.ntracer);
 model.bc.top = zeros(model.nx, model.ny, model.ntracer);
 
 %spatial step sizes
-model.dx = 1000;
-model.dy = 1000;
-model.dz = 1000;
+model.dx = 100;
+model.dy = 100;
+model.dz = 100;
 
 %integration tolerances
 model.atol = 1e-6;

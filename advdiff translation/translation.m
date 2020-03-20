@@ -5,10 +5,11 @@ global nx;
 global ny;
 global nz;
 %set test values
-ntracer = 5;
+ntracer = 1;
 nx = 100;
 ny = 100;
-nz = 100;
+nz = 1;
+
 % % test calls(build bump and blow it sideways)
 % u =  zeros(nx, ny, nz); %wind
 % u(:, 1, 1) = 1*ones(nx, 1);
@@ -158,7 +159,7 @@ nz = 100;
 % %%%%%%%%%%%test that I can call transport_X_dadj properly
 % dt = 5;
 % u = zeros(nx, ny, nz);
-% u(:, 1, 1) = 1*ones(nx, 1);
+% u(:, 1, 1) = 1*ones(nx, 1);sq
 % % u(1, :, 1) = ones(1, ny);
 % % %u = ones(nx, ny, nz);
 % kh = zeros(nx, ny, nz); %k
@@ -174,6 +175,63 @@ nz = 100;
 % transport_X_fwd(dt, u, kh, concentration, concentration_bc, cdot);
 % lambda = ones(size(concentration));
 % trasport_X_dadj(dt, u, kh, concentration, lambda);
+
+%%%%%My goal here is to successfully use the transport_fwd functions to
+%%%%%perform the 2d test problem
+%%%%%I want to build a circle of some radius where everything is 1
+%%%%%everything 0 elsewhere
+concentration = zeros(nx, ny, nz, ntracer);
+cntr = [20, 20];
+rad = 3;
+for i = 1:nx
+    for j = 1:ny
+        pt = [i, j];
+        if(norm(pt - cntr) <= rad)
+           concentration(i, j, 1, 1) = 2; 
+        end
+    end
+end
+clf;
+%%%%%I want to build the wind profiles now
+omega = 2;
+windcntr = [50, 50];
+u = zeros(nx, ny, nz, ntracer);
+v = zeros(nx, ny, nz, ntracer);
+for i = 1:nx
+    for j = 1:ny
+        %u(i, j, 1, 1) = -omega*(j - windcntr(2));
+        %v(i, j, 1, 1) = omega*(i - windcntr(1));
+        %ihat = (i - windcntr(1))/nx;
+        %jhat = (j - windcntr(2))/ny;
+        ihat = i;
+        jhat = j;
+        u(i, j, 1, 1) = 1;
+        v(i, j, 1, 1) = 0;
+    end
+end
+
+quiver(u,v)
+
+dt = 100;
+kh = zeros(nx, ny, nz); %k
+% % %kh = 1000*ones(nx, ny, nz);
+concentration_bc = zeros(2, ny, nz, ntracer); %first component is w second e
+% % %concentration_bc(:, 1, 1, 1) = zeros(2, 1);
+cdot = zeros(nx, ntracer);
+i = 0;
+% %test calls
+contour(concentration);
+pause
+while true
+quiver(u, v)
+hold on
+contour(concentration);
+pause;
+hold off
+concentration1 = transport_X_fwd(dt, u, kh, concentration, concentration_bc, cdot);
+concentration2 = transport_Y_fwd(dt, v, kh, concentration, concentration_bc, cdot);
+concentration = (concentration1 + concentration2)/2;
+end
 
 function concentration = transport_Z_fwd(dt, w, kv, concentration, concentration_bc, surfem, volem, depositionvel)
 global ntracer;
@@ -216,7 +274,7 @@ global nx;
 global ny;
 global nz;
 
-dy = 1000;
+dy = 100;
 deltay = dy;
 nsteps = floor(dt/300) + 1;
 %nsteps = 1e10;
@@ -230,7 +288,7 @@ for i = 1:nx
         dif = kh(i, 1:ny, k)';
         sb(1, :) = squeeze(concentration_bc(1, i, k, 1:ntracer));
         sb(2, :) = squeeze(concentration_bc(2, i, k, 1:ntracer));
-        advdiff_fdh(deltat, nsteps, ny, ntracer, deltay, ...
+        conc = advdiff_fdh(deltat, nsteps, ny, ntracer, deltay, ...
             wind, dif, conc, sb);
         
         concentration(i, 1:ny, k, 1:ntracer) = subplus(conc); %positive part
@@ -246,14 +304,14 @@ global nx;
 global ny;
 global nz;
 
-dx = 1000;
+dx = 100;
 deltax = dx;
 nsteps = floor(dt/300)+1;
 deltat = dt/nsteps;
 
 for j = 1:ny
     for k = 1:nz
-        conc = squeeze(concentration(1:nx, j, k, 1:ntracer));
+        conc = squeeze(concentration(1:nx, j, k, 1:ntracer))';
         wind = u(1:nx, j, k);
         dif = kh(1:nx, j, k);
         sb(1, :) = squeeze(concentration_bc(1, j, k, 1:ntracer));
@@ -262,14 +320,16 @@ for j = 1:ny
             %plot(1:100, conc(:, 1)) %first tracer
             %axis([0, nx, 0, 5])
             %pause
-            cdot = advdiff_fun_fdh(nx, deltax, wind, dif, sb, conc, cdot);
-            c1 = conc + deltat*cdot;
-            cdot = advdiff_fun_fdh(nx, deltax, wind, dif, sb, c1, cdot);
-            conc = conc/2 + (c1 + deltat*cdot)/2;
+            %cdot = advdiff_fun_fdh(nx, deltax, wind, dif, sb, conc, cdot);
+            %c1 = conc + deltat*cdot;
+            %cdot = advdiff_fun_fdh(nx, deltax, wind, dif, sb, c1, cdot);
+            %conc = conc/2 + (c1 + deltat*cdot)/2;
             %wrap around to right
-            conc(1, :) = conc(nx, :);
+            conc = advdiff_fdh(deltat, nsteps, nx, ntracer, deltax, ...
+            wind, dif, conc, sb);
+
         end
-        concentration(1:nx, j, k, 1:ntracer) = subplus(conc); %positive part
+        concentration(1:nx, j, k, 1:ntracer) = subplus(conc)'; %positive part
         %disp("next y, z")
     end
 end
@@ -477,7 +537,7 @@ A = A + eye(n);
 
 for ispec=1:nspec
     for istep=1:nstep
-        ctmp = c(:, ispec);
+        ctmp = c(ispec, :)';
         %plot(ctmp)
         %pause;
         d = bdry(:, ispec);
@@ -485,9 +545,9 @@ for ispec=1:nspec
         b = advdiff_free_fdh(n, dx, u, k, d);
         ctmp = ctmp + dt*b;
         alpha = (dt/2);
-        ctmp = alpha*jac*c(:, ispec) + ctmp;
+        ctmp = alpha*jac*c(ispec, :)' + ctmp;
         ctmp = A\ctmp;
-        c(:, ispec) = ctmp;
+        c(ispec, :) = ctmp;
         %wrap around
         %c(2, :) = c(n, :);
         %c(1, :) = c(n-1,:);
