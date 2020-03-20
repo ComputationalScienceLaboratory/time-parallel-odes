@@ -2,8 +2,8 @@ model = initAdvDiffModel();
 %%%%%%%%%%%%%%Moving to 2D test problem
 %build initial concentration
 concentration = zeros(model.nx, model.ny, model.nz, model.ntracer);
-cntr = [60, 60];
-rad = 1;
+cntr = [6, 6];
+rad = .25;
 for i = 1:model.nx
     for j = 1:model.ny
         pt = [i, j];
@@ -22,8 +22,8 @@ model.x0 = concentration;
 % model.kv = 1000*ones(size(model.kv));
 
 %%%%%I want to build the wind profiles now
-omega = 1;
-windcntr = [50, 50];
+omega = 2;
+windcntr = [5, 5];
 u = zeros(model.nx, model.ny, model.nz, model.ntracer);
 v = zeros(model.nx, model.ny, model.nz, model.ntracer);
 for i = 1:model.nx
@@ -38,25 +38,154 @@ quiver(v(:, :, 1, 1),u(:, :, 1, 1))
 hold on
 contour(concentration(:, :, 1, 1));
 hold off
+
+movieit = 0;
+%Integration loop (normal time integrators)
 while true
-concentration = transport_X_fwd(concentration, model);
-quiver(v(:, :, 1, 1),u(:, :, 1, 1))
-hold on
-contour(concentration(:, :, 1, 1));
-pause(5/1000);
-hold off
-pause(5/1000);
-
-concentration = transport_Y_fwd(concentration, model);
-quiver(v(:, :, 1, 1),u(:, :, 1, 1))
-hold on
-contour(concentration(:, :, 1, 1));
-pause(5/1000);
-hold off
-
+    movieit = movieit + 1;
+    
+    concentration = par_transport_X_fwd(concentration, model);
+    %concentration = transport_X_fwd(concentration, model);
+    quiver(v(:, :, 1, 1),u(:, :, 1, 1))
+    hold on
+    contour(concentration(:, :, 1, 1));
+    pause(5/1000);
+    hold off
+    pause(5/1000);
+    
+    concentration = par_transport_Y_fwd(concentration, model);
+    %concentration = transport_Y_fwd(concentration, model);
+    quiver(v(:, :, 1, 1),u(:, :, 1, 1))
+    hold on
+    contour(concentration(:, :, 1, 1));
+    pause(5/1000);
+    hold off
+    
+    M(movieit) = getframe;
 end
+
 %%%%%%%%end of 2d problem test code
-%%%%%%%%2d problem 1d transport functions
+%%%%%%%%2d problem 1d transport functions (our GN algo, coarsened H blcks)
+function concentration = par_transport_Y_fwd(concentration, model)
+% dx = model.dx;
+% deltax = dx;
+%nsteps = floor(dt/300)+1;
+%deltat = dt/nsteps;
+model.n = model.ny;
+
+for i = 1:model.nx
+    for k = 1:model.nz
+        conc = squeeze(concentration(i, :, k, :))';
+        wind = model.v(i, :, k);
+        dif = model.kh(i, :, k);
+        sb(1, :) = squeeze(model.bc.s(i, k, :));
+        sb(2, :) = squeeze(model.bc.n(i, k, :));
+        %for l = 1:nsteps
+        %specify RHS, Jacobian
+        jac = advdiff_jac_fdh(model.ny, model.dy, wind, dif);
+        model.jac = @(t, x) jac;
+        model.rhs = @(t, x) jac*x + advdiff_free_fdh(model.ny, model.dy, wind, dif, sb);
+        model.x0 = conc;
+        %pass to our algo
+        %Do forward Euler for initial forward integration
+        yc = zeros(model.nx, model.M);
+        yc(:, 1) = conc;
+        for f = 2:model.M
+            yc(:, f) = yc(:, f- 1) + (model.times(f) - model.times(f-1))*model.rhs(model.times(f - 1), yc(:, f - 1));
+        end
+        model.stateestimate = yc;
+        
+        x = model.stateestimate(:, 2:end);
+        optiter = 0;
+        [c, g] = costfcn(x, model);
+        
+        while c > 1
+            %disp(optiter);
+            %disp(c);
+            optiter = optiter + 1;
+            Li = fullLinv(x, model);
+            Lit = fullLinvT(x, model);
+            dx = Li*Lit*(-g);
+            a = backtrack(x(:), dx, model);
+            dx = reshape(dx, model.n, model.M-1);
+            x = x + a*dx;
+            [c, g] = costfcn(x, model);
+        end
+        
+        
+        
+        xt = x(:, end);
+        concentration(i, :, k, :) = subplus(xt)'; %positive part
+        %disp("next y, z")
+        %pause;
+    end
+end
+
+return;
+end
+
+function concentration = par_transport_X_fwd(concentration, model)
+% dx = model.dx;
+% deltax = dx;
+%nsteps = floor(dt/300)+1;
+%deltat = dt/nsteps;
+model.n = model.nx;
+
+for j = 1:model.ny
+    for k = 1:model.nz
+        conc = squeeze(concentration(:, j, k, :));
+        wind = model.u(:, j, k);
+        dif = model.kh(:, j, k);
+        sb(1, :) = squeeze(model.bc.w(j, k, :));
+        sb(2, :) = squeeze(model.bc.e(j, k, :));
+        %for l = 1:nsteps
+        %specify RHS, Jacobian
+        jac = advdiff_jac_fdh(model.nx, model.dx, wind, dif);
+        model.jac = @(t, x) jac;
+        model.rhs = @(t, x) jac*x + advdiff_free_fdh(model.nx, model.dx, wind, dif, sb);
+        %pass to our algo
+        model.x0 = conc;
+        
+        %Do forward Euler for initial forward integration
+        yc = zeros(model.nx, model.M);
+        yc(:, 1) = conc;
+        for f = 2:model.M %all the other indices are taken
+            yc(:, f) = yc(:, f- 1) + (model.times(f) - model.times(f-1))*model.rhs(model.times(f - 1), yc(:, f - 1));
+        end
+        model.stateestimate = yc;
+        
+        x = model.stateestimate(:, 2:end);
+        optiter = 0;
+        [c, g] = costfcn(x, model);
+        
+        while c > 1
+            %disp(optiter);
+            %disp(c);
+            optiter = optiter + 1;
+            Li = fullLinv(x, model);
+            Lit = fullLinvT(x, model);
+            dx = Li*Lit*(-g);
+            a = backtrack(x(:), dx, model);
+            dx = reshape(dx, model.n, model.M-1);
+            x = x + a*dx;
+            [c, g] = costfcn(x, model);
+        end
+        
+        
+        
+        xt = x(:, end);
+        concentration(:, j, k, :) = subplus(xt)'; %positive part
+        %disp("next y, z")
+        %pause;
+    end
+end
+
+return;
+end
+
+
+
+%%%%%%%%2d problem 1d transport functions (MATLODE time integrators)
 function concentration = transport_Y_fwd(concentration, model)
 % dx = model.dx;
 % deltax = dx;
@@ -909,7 +1038,7 @@ for i = 1:m %block rows
     scale = [scale; sqrt(d)];
 end
 scale = diag(scale);
-spy(scale);
+%spy(scale);
 
 Lnv = cols*scale;
 end
@@ -982,7 +1111,7 @@ for i = 1:m %block rows
     scale = [scale; sqrt(d)];
 end
 scale = diag(scale);
-spy(scale);
+%spy(scale);
 
 Lnv = cols*scale;
 end

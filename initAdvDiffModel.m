@@ -1,20 +1,20 @@
 function [model] = initAdvDiffModel()
-model.nx = 100; %model dimension
-model.ny = 100;
+model.nx = 10; %model dimension
+model.ny = 10;
 model.nz = 1;
 model.ntracer = 1;
 
-tspan = [0, 15]; %full integration timespan
+tspan = [0, 1]; %full integration timespan
 model.tspan = tspan;
 model.dt = model.tspan(2) - model.tspan(1);
 
-M = 5;
+M = 3;
 model.M = M; %subintervals to divide tspan into. If you set M=1 it will crash.
 model.times = linspace(tspan(1), tspan(2), M);
 model.dts = diff(model.times);
 
 model.x0full = randn(model.nx, model.ny, model.nz, model.ntracer); %specify initial values
-model.stateestimate = zeros(model.nx, model.ny, model.nz, model.ntracer, M);
+%model.stateestimate = zeros(model.nx, model.ny, model.nz, model.ntracer, M);
 %store estimate of states before optimization
 %(used to build R_i scaling matrices,
 %fixed before optimization).
